@@ -44,7 +44,7 @@ options nodate nonumber linesize=120 pagesize=60;
 
 /* ---- Analysis parameters ----------------------------------------------- */
 %let MIN_AGE   = 18;     /* Restrict to adults                              */
-%let SEED      = 20260425;
+%let SEED      = 20260201;
 %let LOGIT_SL  = 0.05;
 
 title1 "NHANES 2021-2023: Diet, Physical Activity, and Obesity";
