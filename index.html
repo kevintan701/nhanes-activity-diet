@@ -215,8 +215,8 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
   <div class="abstract-label">Abstract</div>
   <p><strong>Background:</strong> Obesity affects 40.5% of U.S. adults and drives substantial morbidity and healthcare expenditure.<sup class="ref">6</sup> Identifying modifiable predictors — physical activity, sedentary time, dietary quality — is essential for public health intervention design.</p>
   <p><strong>Methods:</strong> We analysed cross-sectional data from 6,235 adults (≥18 years) in the CDC NHANES August 2021–August 2023 cycle. Five relational XPT files were merged on respondent ID: demographics (DEMO_L), body measures (BMX_L), physical activity (PAQ_L), dietary recall day 1 (DR1TOT_L), and blood pressure (BPXO_L). Physical activity was quantified as MET-minutes per week using CDC-aligned formulas. Logistic regression with stepwise selection identified independent predictors of obesity (BMI ≥30). Survey-weighted estimates used PROC SURVEYFREQ with MEC weights.<sup class="ref">1,7</sup></p>
-  <p><strong>Results:</strong> Obesity prevalence was 40.5%. Sedentary adults had 52% obesity vs. 33% in active adults (p&lt;0.001). The composite activity score was the strongest predictor (OR=0.932, p&lt;0.001), followed by sedentary time (OR=1.001/min, p&lt;0.001) and dietary fibre (OR=0.983/g/day, p&lt;0.001). A pronounced income gradient was observed (OR=1.55, below-poverty vs. high-income, p&lt;0.001). The 7-predictor stepwise model achieved AUC=0.656 with outstanding calibration (Hosmer–Lemeshow p=0.990).<sup class="ref">5</sup></p>
-  <p style="margin:0"><strong>Conclusions:</strong> Physical activity, sedentary behaviour, dietary fibre, socioeconomic status, and hypertension are the strongest independent modifiable predictors of adult obesity. These findings support multi-component public health interventions targeting sitting time, diet quality, and income-related health disparities.</p>
+  <p><strong>Results:</strong> Obesity prevalence was 40.5%. Sedentary adults had 52% obesity vs. 33% in active adults (p&lt;0.001). The composite activity score was the strongest predictor (OR=0.932, p&lt;0.001), followed by sedentary time (OR=1.001/min, p&lt;0.001) and dietary fiber (OR=0.983/g/day, p&lt;0.001). A pronounced income gradient was observed (OR=1.55, below-poverty vs. high-income, p&lt;0.001). The 7-predictor stepwise model achieved AUC=0.656 with outstanding calibration (Hosmer–Lemeshow p=0.990).<sup class="ref">5</sup></p>
+  <p style="margin:0"><strong>Conclusions:</strong> Physical activity, sedentary behavior, dietary fiber, socioeconomic status, and hypertension are the strongest independent modifiable predictors of adult obesity. These findings support multi-component public health interventions targeting sitting time, diet quality, and income-related health disparities.</p>
 </div>
 
 <!-- TOC -->
@@ -241,7 +241,7 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
   <h2 class="sec-title">Introduction</h2>
   <p>Obesity is one of the most consequential public health challenges in the United States. Data from the most recent NHANES cycle (August 2021–August 2023) confirm that 40.5% of American adults have obesity (BMI ≥30 kg/m²), while a further 31.5% are overweight.<sup class="ref">6</sup> Obesity is a primary driver of type 2 diabetes, cardiovascular disease, hypertension, sleep apnoea, and several cancers, accounting for an estimated $173 billion annually in direct medical costs.</p>
   <p>Physical inactivity and poor dietary habits are well-recognised modifiable risk factors. The 2018 Physical Activity Guidelines for Americans recommend at least 150 minutes of moderate-intensity or 75 minutes of vigorous-intensity aerobic activity per week (≥600 MET-minutes/week).<sup class="ref">2</sup> Yet nearly half of adults fail to meet these guidelines, and prolonged sedentary time has increased independently as screen-based work and leisure have expanded.<sup class="ref">4</sup></p>
-  <p>This analysis addresses three research questions: (1) Do physically active adults have lower obesity prevalence than sedentary adults? (2) Which dietary factors are independently associated with obesity after demographic adjustment? (3) Can a parsimonious logistic model predict obesity from behavioural and demographic variables, and how well is it calibrated?</p>
+  <p>This analysis addresses three research questions: (1) Do physically active adults have lower obesity prevalence than sedentary adults? (2) Which dietary factors are independently associated with obesity after demographic adjustment? (3) Can a parsimonious logistic model predict obesity from behavioral and demographic variables, and how well is it calibrated?</p>
 </section>
 
 <hr class="div">
@@ -288,8 +288,8 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
       <tr><td>Meets CDC PA guidelines</td><td>3,292 (52.8%)</td><td>≥600 MET-min/week</td></tr>
       <tr><td>Sedentary (no leisure PA)</td><td>1,153 (18.5%)</td><td></td></tr>
       <tr><td>Mean sedentary time (SD)</td><td>364 (208) min/day</td><td>~6 hours/day</td></tr>
-      <tr><td>Mean dietary fibre (SD)</td><td>16.2 (10.5) g/day</td><td>Guideline: 25–38 g/day</td></tr>
-      <tr><td>Low fibre (&lt;15 g/day)</td><td>2,670 (42.8%)</td><td></td></tr>
+      <tr><td>Mean dietary fiber (SD)</td><td>16.2 (10.5) g/day</td><td>Guideline: 25–38 g/day</td></tr>
+      <tr><td>Low fiber (&lt;15 g/day)</td><td>2,670 (42.8%)</td><td></td></tr>
       <tr><td>Mean daily calories (SD)</td><td>1,977 (907) kcal</td><td></td></tr>
     </tbody>
   </table>
@@ -356,7 +356,7 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
   <p>The composite activity score was the single strongest predictor (OR=0.953/point, p=0.003). Meeting CDC PA guidelines was independently protective (OR=0.694, p=0.013). Sedentary minutes per day raised obesity odds independently of the activity score (OR=1.001/min, p&lt;0.001).</p>
 
   <h3>5.2 Model B — Dietary predictors (N=4,929, AUC=0.573)</h3>
-  <p>Dietary fibre was the only significant protective dietary predictor (OR=0.973/g/day, p&lt;0.001). Sodium was positively associated with obesity (OR=1.000/mg, p&lt;0.001), reflecting an overall dietary-pattern effect. Log-caloric intake showed a marginal negative association (OR=0.778, p=0.032).</p>
+  <p>Dietary fiber was the only significant protective dietary predictor (OR=0.973/g/day, p&lt;0.001). Sodium was positively associated with obesity (OR=1.000/mg, p&lt;0.001), reflecting an overall dietary-pattern effect. Log-caloric intake showed a marginal negative association (OR=0.778, p=0.032).</p>
 
   <h3>5.3 Model C — Full stepwise model: AUC built step by step</h3>
   <div class="finding">
@@ -373,7 +373,7 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
       <div class="auc-step"><span class="step-num">0</span><span class="step-var">Null model</span><div class="step-track"><div class="step-fill" style="background:#d0d0d0" data-w="0"></div></div><span class="step-auc">0.500</span></div>
       <div class="auc-step"><span class="step-num">1</span><span class="step-var"><strong>Composite Activity Score</strong></span><div class="step-track"><div class="step-fill" style="background:#1d9e75" data-w="57.8"></div></div><span class="step-auc">0.608</span></div>
       <div class="auc-step"><span class="step-num">2</span><span class="step-var">Hypertension</span><div class="step-track"><div class="step-fill" style="background:#2980b9" data-w="61.7"></div></div><span class="step-auc">0.624</span></div>
-      <div class="auc-step"><span class="step-num">3</span><span class="step-var">Dietary Fibre</span><div class="step-track"><div class="step-fill" style="background:#2980b9" data-w="65.0"></div></div><span class="step-auc">0.635</span></div>
+      <div class="auc-step"><span class="step-num">3</span><span class="step-var">Dietary Fiber</span><div class="step-track"><div class="step-fill" style="background:#2980b9" data-w="65.0"></div></div><span class="step-auc">0.635</span></div>
       <div class="auc-step"><span class="step-num">4</span><span class="step-var">Age Group</span><div class="step-track"><div class="step-fill" style="background:#8e44ad" data-w="67.0"></div></div><span class="step-auc">0.642</span></div>
       <div class="auc-step"><span class="step-num">5</span><span class="step-var">Sedentary Minutes/Day</span><div class="step-track"><div class="step-fill" style="background:#1d9e75" data-w="68.3"></div></div><span class="step-auc">0.647</span></div>
       <div class="auc-step"><span class="step-num">6</span><span class="step-var">Income Category</span><div class="step-track"><div class="step-fill" style="background:#8e44ad" data-w="70.3"></div></div><span class="step-auc">0.655</span></div>
@@ -399,7 +399,7 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
       <span class="fr-or prot">0.932 ★</span>
     </div>
     <div class="forest-row" data-or="0.983" data-lo="0.977" data-hi="0.989" data-prot="true">
-      <span class="fr-label">Dietary fibre<small>per g/day, ↓ protective</small></span>
+      <span class="fr-label">Dietary fiber<small>per g/day, ↓ protective</small></span>
       <div class="fr-bar-area"><div class="fr-ref-line"></div></div>
       <span class="fr-or prot">0.983</span>
     </div>
@@ -499,11 +499,11 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
   <h3>Sedentary time as an independent risk factor</h3>
   <p>After adjusting for the activity score, sedentary minutes per day remained an independent, significant predictor (OR=1.001/min, p&lt;0.001). Adults averaging 480 min/day of sedentary time have approximately 12% higher odds of obesity than those averaging 360 min/day, independent of their leisure activity. This confirms the emerging consensus that prolonged sitting is a distinct health risk, not simply the absence of exercise.<sup class="ref">4</sup></p>
 
-  <h3>Dietary fibre</h3>
-  <p>Among all dietary factors, only fibre was a robust independent predictor of lower obesity odds (OR=0.983/g/day). Adults consuming the recommended 35 g/day versus the national median of 14 g/day would have approximately 37% lower odds of obesity, all else equal. With 42.8% of adults below 15 g/day, there is substantial population-level headroom for improvement through dietary intervention.<sup class="ref">3</sup></p>
+  <h3>Dietary fiber</h3>
+  <p>Among all dietary factors, only fiber was a robust independent predictor of lower obesity odds (OR=0.983/g/day). Adults consuming the recommended 35 g/day versus the national median of 14 g/day would have approximately 37% lower odds of obesity, all else equal. With 42.8% of adults below 15 g/day, there is substantial population-level headroom for improvement through dietary intervention.<sup class="ref">3</sup></p>
 
   <h3>Socioeconomic gradient</h3>
-  <p>The persistent income gradient — with below-poverty adults having 55% higher obesity odds than high-income peers, even after adjusting for activity, diet, and demographics — reflects structural barriers including food insecurity, limited access to safe recreational spaces, time constraints, and stress-mediated eating. This finding underscores the need for upstream, structural interventions alongside individual behaviour change programmes.</p>
+  <p>The persistent income gradient — with below-poverty adults having 55% higher obesity odds than high-income peers, even after adjusting for activity, diet, and demographics — reflects structural barriers including food insecurity, limited access to safe recreational spaces, time constraints, and stress-mediated eating. This finding underscores the need for upstream, structural interventions alongside individual behavior change programs.</p>
 </section>
 
 <hr class="div">
@@ -518,7 +518,7 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
     <li><strong>Self-reported physical activity.</strong> PAQ_L is subject to social desirability bias; accelerometer-based objective data are available in alternate NHANES cycles.</li>
     <li><strong>Missing dietary data.</strong> 1,301 participants (20.9%) lacked complete dietary data and were excluded from Models B and C, introducing potential selection bias.</li>
     <li><strong>BMI as outcome.</strong> BMI does not directly measure body fatness and may misclassify individuals with high lean mass or atypical fat distribution.</li>
-    <li><strong>Moderate discrimination.</strong> AUC=0.656 reflects the inherent limitation of self-reported behavioural data for predicting a continuously distributed trait.</li>
+    <li><strong>Moderate discrimination.</strong> AUC=0.656 reflects the inherent limitation of self-reported behavioral data for predicting a continuously distributed trait.</li>
   </ul>
 </section>
 
