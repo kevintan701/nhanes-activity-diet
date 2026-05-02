@@ -1,0 +1,2859 @@
+ 
+ 1          OPTIONS NONOTES NOSTIMER NOSOURCE NOSYNTAXCHECK;
+ NOTE: ODS statements in the SAS Studio environment may disable some output features.
+ 69         
+ 70         /******************************************************************************/
+ 71         /*  PROJECT:  Diet, Physical Activity, and Obesity Risk Analysis              */
+ 72         /*  PROGRAM:  nhanes_activity_diet.sas                                        */
+ 73         /*  AUTHOR:   Yuntao (Kevin) Tan                                              */
+ 74         /*  DATE:     2026-02-02                                                      */
+ 75         /*                                                                            */
+ 76         /*                                                                            */
+ 77         /*  DESCRIPTION:                                                              */
+ 78         /*    Analysis of CDC NHANES (Aug 2021-Aug 2023) data to examine how daily    */
+ 79         /*    dietary intake and physical activity patterns relate to obesity and      */
+ 80         /*    metabolic health in U.S. adults. Covers multi-file XPT import, data     */
+ 81         /*    cleaning, feature engineering, EDA, logistic regression, and            */
+ 82         /*    a reusable profiling macro.                                             */
+ 83         /*                                                                            */
+ 84         /*  DATA SOURCE:                                                              */
+ 85         /*    CDC National Health and Nutrition Examination Survey (NHANES)           */
+ 86         /*    Cycle: August 2021 - August 2023 (suffix _L)                           */
+ 87         /*    URL:   https://wwwn.cdc.gov/nchs/nhanes/                               */
+ 88         /*                                                                            */
+ 89         /*    Files needed (download as XPT and upload to SAS OnDemand):             */
+ 90         /*      DEMO_L.XPT  - Demographics (age, sex, race, income)                  */
+ 91         /*      BMX_L.XPT   - Body Measures (height, weight, BMI, waist)             */
+ 92         /*      PAQ_L.XPT   - Physical Activity questionnaire (adults 18+)           */
+ 93         /*      DR1TOT_L.XPT- Dietary Recall Day 1 (calories, protein, fat, etc.)   */
+ 94         /*      BPXO_L.XPT  - Blood Pressure (systolic/diastolic)                    */
+ 95         /*                                                                            */
+ 96         /*  RESEARCH QUESTIONS:                                                       */
+ 97         /*    1. Do physically active adults have lower obesity prevalence?           */
+ 98         /*    2. Which dietary factors (calories, protein, sugar, fiber) are most    */
+ 99         /*       associated with obesity status after adjusting for demographics?     */
+ 100        /*    3. Can a simple model predict obesity from activity + diet alone?       */
+ 101        /*                                                                            */
+ 102        /******************************************************************************/
+ 103        
+ 104        
+ 105        /******************************************************************************/
+ 106        /* SECTION 0: GLOBAL SETUP                                                    */
+ 107        /******************************************************************************/
+ 108        
+ 109        /* Export traditional SAS listing output for .lst submission */
+ 110        ods listing file="/home/u64415572/nhanes-activity-diet/nhanes_activity_diet.lst";
+ 111        
+ 112        options nodate nonumber linesize=120 pagesize=60;
+ 113        
+ 114        /* ---- Update this path to your SAS OnDemand upload folder --------------- */
+ 115        %let DATAPATH = /home/u64415572/nhanes-activity-diet;
+ 116        
+ 117        /* ---- Analysis parameters ----------------------------------------------- */
+ 118        %let MIN_AGE   = 18;     /* Restrict to adults                              */
+ 119        %let SEED      = 20260425;
+ 120        %let LOGIT_SL  = 0.05;
+ 121        
+ 122        title1 "NHANES 2021-2023: Diet, Physical Activity, and Obesity";
+ 123        title2 "Yuntao (Kevin) Tan  |  Independent Portfolio  |  CDC Public-Use Data Analysis";
+ 124        
+ 125        
+ 126        /******************************************************************************/
+ 127        /* SECTION 1: MACRO LIBRARY                                                   */
+ 128        /*                                                                            */
+ 129        /*   %IMPORT_XPT     - Import a single NHANES XPT file into WORK             */
+ 130        /*   %SUMMARIZE_VAR  - Univariate stats for a numeric variable                */
+ 131        /*   %FREQ_TABLE     - One-way frequency for a categorical variable           */
+ 132        /*   %PROFILE_GROUP  - Compare key outcomes across a categorical grouping     */
+ 133        /******************************************************************************/
+ 134        
+ 135        /* -------------------------------------------------------------------------- */
+ 136        /* %IMPORT_XPT                                                                */
+ 137        /*   Reads a SAS transport (.XPT) file from the data folder and creates a    */
+ 138        /*   WORK dataset. NHANES distributes all public files in XPT format.        */
+ 139        /*                                                                            */
+ 140        /*   Parameters:                                                              */
+ 141        /*     FILE  = XPT filename without extension (e.g., DEMO_L)                 */
+ 142        /*     OUT   = Name of output WORK dataset                                   */
+ 143        /* -------------------------------------------------------------------------- */
+ 144        %macro import_xpt(file=, out=);
+ 145        
+ 146            /* PROC COPY via xport libname is the most reliable XPT import method.
+ 147               The filename reference is used only as a fallback check.
+ 148               Note: Linux filesystems are case-sensitive; files on disk are .xpt  */
+ 149            libname xptlib xport "&DATAPATH./&file..xpt" access=readonly;
+ 150        
+ 151            proc copy inlib=xptlib outlib=work;
+ 152                select &file.;
+ 153            run;
+ 154        
+ 155            /* Rename the copied dataset to the requested output name if different */
+ 156            %if %upcase(&file.) ne %upcase(&out.) %then %do;
+ 157                proc datasets library=work nolist;
+ 158                    change &file. = &out.;
+ 159                quit;
+ 160            %end;
+ 161        
+ 162            libname xptlib clear;
+ 163        
+ 164            proc sql noprint;
+ 165                select count(*) into :_nobs trimmed from work.&out.;
+ 166            quit;
+ 167            %put NOTE: [import_xpt] &file..xpt -> WORK.&out. | N = &_nobs. rows;
+ 168        
+ 169        %mend import_xpt;
+ 170        
+ 171        
+ 172        /* -------------------------------------------------------------------------- */
+ 173        /* %SUMMARIZE_VAR                                                             */
+ 174        /*   Descriptive statistics for a single numeric variable.                   */
+ 175        /* -------------------------------------------------------------------------- */
+ 176        %macro summarize_var(dsn=, var=, label=);
+ 177        
+ 178            %if %length(&label.) = 0 %then %let label = &var.;
+ 179        
+ 180            proc means data=&dsn. n nmiss mean std min p25 median p75 max maxdec=2;
+ 181                var &var.;
+ 182                label &var. = "&label.";
+ 183                title3 "Summary: &label.";
+ 184            run;
+ 185        
+ 186        %mend summarize_var;
+ 187        
+ 188        
+ 189        /* -------------------------------------------------------------------------- */
+ 190        /* %FREQ_TABLE                                                                */
+ 191        /*   Frequency distribution for a categorical variable.                      */
+ 192        /* -------------------------------------------------------------------------- */
+ 193        %macro freq_table(dsn=, var=, label=);
+ 194        
+ 195            %if %length(&label.) = 0 %then %let label = &var.;
+ 196        
+ 197            proc freq data=&dsn.;
+ 198                tables &var. / missing nocum;
+ 199                label &var. = "&label.";
+ 200                title3 "Frequency: &label.";
+ 201            run;
+ 202        
+ 203        %mend freq_table;
+ 204        
+ 205        
+ 206        /* -------------------------------------------------------------------------- */
+ 207        /* %PROFILE_GROUP                                                             */
+ 208        /*   Compares means of a continuous outcome across levels of a grouping       */
+ 209        /*   variable. Used to profile BMI, calorie intake, and activity by group.   */
+ 210        /*                                                                            */
+ 211        /*   Parameters:                                                              */
+ 212        /*     DSN      = Input dataset                                               */
+ 213        /*     GROUPVAR = Categorical grouping variable                               */
+ 214        /*     OUTVARS  = Space-separated list of numeric outcome variables           */
+ 215        /*     TITLE    = Descriptive title for the output                           */
+ 216        /* -------------------------------------------------------------------------- */
+ 217        %macro profile_group(dsn=, groupvar=, outvars=, title=);
+ 218        
+ 219            proc means data=&dsn. mean std median n maxdec=2 nway;
+ 220                class &groupvar.;
+ 221                var &outvars.;
+ 222                title3 "&title.";
+ 223                title4 "Grouped by: &groupvar.";
+ 224            run;
+ 225        
+ 226        %mend profile_group;
+ 227        
+ 228        
+ 229        /******************************************************************************/
+ 230        /* SECTION 2: DATA IMPORT                                                     */
+ 231        /*   Import five NHANES XPT files. Each file shares SEQN as the unique       */
+ 232        /*   respondent key for merging.                                              */
+ 233        /*                                                                            */
+ 234        /*   HOW TO GET THE DATA (one-time setup):                                   */
+ 235        /*   1. Go to https://wwwn.cdc.gov/nchs/nhanes/search/datapage.aspx          */
+ 236        /*   2. Select cycle "August 2021 - August 2023"                             */
+ 237        /*   3. Download these XPT files:                                            */
+ 238        /*        Demographics  -> DEMO_L.XPT                                        */
+ 239        /*        Examination   -> BMX_L.XPT                                         */
+ 240        /*        Questionnaire -> PAQ_L.XPT  (2021-2023: PAD790Q/U, PAD800,        */
+ 241        /*                                     PAD810Q/U, PAD820, PAD680)            */
+ 242        /*        Dietary       -> DR1TOT_L.XPT  (Day 1 Total Nutrients)             */
+ 243        /*        Examination   -> BPXO_L.XPT   (Blood Pressure)                    */
+ 244        /*   4. Upload all five files to your SAS OnDemand home folder:              */
+ 245        /*        Server Files -> Upload -> select all five XPT files                */
+ 246        /*   5. Update %let DATAPATH above to point to that folder.                  */
+ 247        /******************************************************************************/
+ 248        
+ 249        title2 "Section 2 - Data Import";
+ 250        
+ 251        %import_xpt(file=DEMO_L,   out=demo);
+ NOTE: Libref XPTLIB was successfully assigned as follows: 
+       Engine:        XPORT 
+       Physical Name: /home/u64415572/nhanes-activity-diet/DEMO_L.xpt
+ 
+ NOTE: Input library XPTLIB is sequential.
+ NOTE: Copying XPTLIB.DEMO_L to WORK.DEMO_L (memtype=DATA).
+ NOTE: BUFSIZE is not cloned when copying across different engines. System Option for BUFSIZE was used.
+ NOTE: There were 11933 observations read from the data set XPTLIB.DEMO_L.
+ NOTE: The data set WORK.DEMO_L has 11933 observations and 27 variables.
+ NOTE: PROCEDURE COPY used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.01 seconds
+       memory              2270.59k
+       OS Memory           29864.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        212  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     267
+       Page Swaps                        0
+       Voluntary Context Switches        16
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           5136
+       
+ 
+ 
+ NOTE: Changing the name WORK.DEMO_L to WORK.DEMO (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              494.93k
+       OS Memory           29092.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        213  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     49
+       Page Swaps                        0
+       Voluntary Context Switches        22
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ NOTE: Libref XPTLIB has been deassigned.
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              6808.96k
+       OS Memory           34984.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        214  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     258
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ NOTE: [import_xpt] DEMO_L.xpt -> WORK.demo | N = 11933 rows
+ 252        %import_xpt(file=BMX_L,    out=bmx);
+ NOTE: Libref XPTLIB was successfully assigned as follows: 
+       Engine:        XPORT 
+       Physical Name: /home/u64415572/nhanes-activity-diet/BMX_L.xpt
+ 
+ NOTE: Input library XPTLIB is sequential.
+ NOTE: Copying XPTLIB.BMX_L to WORK.BMX_L (memtype=DATA).
+ NOTE: BUFSIZE is not cloned when copying across different engines. System Option for BUFSIZE was used.
+ NOTE: There were 8860 observations read from the data set XPTLIB.BMX_L.
+ NOTE: The data set WORK.BMX_L has 8860 observations and 22 variables.
+ NOTE: PROCEDURE COPY used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2261.56k
+       OS Memory           30120.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        215  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     214
+       Page Swaps                        0
+       Voluntary Context Switches        16
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           3088
+       
+ 
+ 
+ NOTE: Changing the name WORK.BMX_L to WORK.BMX (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              491.31k
+       OS Memory           29092.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        216  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     48
+       Page Swaps                        0
+       Voluntary Context Switches        20
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ NOTE: Libref XPTLIB has been deassigned.
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              6806.50k
+       OS Memory           34984.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        217  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     244
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ NOTE: [import_xpt] BMX_L.xpt -> WORK.bmx | N = 8860 rows
+ 253        %import_xpt(file=PAQ_L,    out=paq);
+ NOTE: Libref XPTLIB was successfully assigned as follows: 
+       Engine:        XPORT 
+       Physical Name: /home/u64415572/nhanes-activity-diet/PAQ_L.xpt
+ 
+ NOTE: Input library XPTLIB is sequential.
+ NOTE: Copying XPTLIB.PAQ_L to WORK.PAQ_L (memtype=DATA).
+ NOTE: BUFSIZE is not cloned when copying across different engines. System Option for BUFSIZE was used.
+ NOTE: There were 8153 observations read from the data set XPTLIB.PAQ_L.
+ NOTE: The data set WORK.PAQ_L has 8153 observations and 8 variables.
+ NOTE: PROCEDURE COPY used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              1357.37k
+       OS Memory           29352.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        218  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     85
+       Page Swaps                        0
+       Voluntary Context Switches        17
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           1040
+       
+ 
+ 
+ NOTE: Changing the name WORK.PAQ_L to WORK.PAQ (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              491.31k
+       OS Memory           29092.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        219  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     48
+       Page Swaps                        0
+       Voluntary Context Switches        22
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ NOTE: Libref XPTLIB has been deassigned.
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              5857.43k
+       OS Memory           34472.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        220  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     116
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ NOTE: [import_xpt] PAQ_L.xpt -> WORK.paq | N = 8153 rows
+ 254        %import_xpt(file=DR1TOT_L, out=diet);
+ NOTE: Libref XPTLIB was successfully assigned as follows: 
+       Engine:        XPORT 
+       Physical Name: /home/u64415572/nhanes-activity-diet/DR1TOT_L.xpt
+ 
+ NOTE: Input library XPTLIB is sequential.
+ NOTE: Copying XPTLIB.DR1TOT_L to WORK.DR1TOT_L (memtype=DATA).
+ NOTE: BUFSIZE is not cloned when copying across different engines. System Option for BUFSIZE was used.
+ NOTE: There were 8860 observations read from the data set XPTLIB.DR1TOT_L.
+ NOTE: The data set WORK.DR1TOT_L has 8860 observations and 168 variables.
+ NOTE: PROCEDURE COPY used (Total process time):
+       real time           0.04 seconds
+       user cpu time       0.04 seconds
+       system cpu time     0.01 seconds
+       memory              2432.62k
+       OS Memory           30120.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        221  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     196
+       Page Swaps                        0
+       Voluntary Context Switches        17
+       Involuntary Context Switches      2
+       Block Input Operations            0
+       Block Output Operations           23568
+       
+ 
+ 
+ NOTE: Changing the name WORK.DR1TOT_L to WORK.DIET (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              603.43k
+       OS Memory           29092.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        222  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     48
+       Page Swaps                        0
+       Voluntary Context Switches        22
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ NOTE: Libref XPTLIB has been deassigned.
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              6830.59k
+       OS Memory           34984.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        223  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     245
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ NOTE: [import_xpt] DR1TOT_L.xpt -> WORK.diet | N = 8860 rows
+ 255        %import_xpt(file=BPXO_L,   out=bp);
+ NOTE: Libref XPTLIB was successfully assigned as follows: 
+       Engine:        XPORT 
+       Physical Name: /home/u64415572/nhanes-activity-diet/BPXO_L.xpt
+ 
+ NOTE: Input library XPTLIB is sequential.
+ NOTE: Copying XPTLIB.BPXO_L to WORK.BPXO_L (memtype=DATA).
+ NOTE: BUFSIZE is not cloned when copying across different engines. System Option for BUFSIZE was used.
+ NOTE: There were 7801 observations read from the data set XPTLIB.BPXO_L.
+ NOTE: The data set WORK.BPXO_L has 7801 observations and 12 variables.
+ NOTE: PROCEDURE COPY used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              1645.68k
+       OS Memory           29352.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        224  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     85
+       Page Swaps                        0
+       Voluntary Context Switches        17
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           1552
+       
+ 
+ 
+ NOTE: Changing the name WORK.BPXO_L to WORK.BP (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              491.31k
+       OS Memory           29092.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        225  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     48
+       Page Swaps                        0
+       Voluntary Context Switches        21
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ NOTE: Libref XPTLIB has been deassigned.
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              6115.53k
+       OS Memory           34728.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        226  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     180
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ NOTE: [import_xpt] BPXO_L.xpt -> WORK.bp | N = 7801 rows
+ 256        
+ 257        
+ 258        /******************************************************************************/
+ 259        /* SECTION 3: DATA CLEANING AND COHORT SELECTION                              */
+ 260        /*   3.1  Keep adults 18+ with complete examination data                      */
+ 261        /*   3.2  Recode categorical variables with interpretable labels              */
+ 262        /*   3.3  Merge all five files on SEQN                                        */
+ 263        /*   3.4  Flag key missing variables                                          */
+ 264        /******************************************************************************/
+ 265        
+ 266        title2 "Section 3 - Data Cleaning and Cohort Selection";
+ 267        
+ 268        /* ---- 3.1  Adult demographics: keep 18+, extract key variables ----------- */
+ 269        data work.demo_clean;
+ 270            set work.demo;
+ 271        
+ 272            /* Restrict to adults */
+ 273            where RIDAGEYR >= &MIN_AGE.;
+ 274        
+ 275            /* Rename for clarity */
+ 276            age     = RIDAGEYR;
+ 277            sex     = RIAGENDR;     /* 1=Male 2=Female                               */
+ 278            pir     = INDFMPIR;     /* Poverty-to-income ratio; higher=wealthier     */
+ 279        
+ 280            /* Race/ethnicity: recode to readable label */
+ 281            length race_label $25;
+ 282            select (RIDRETH3);
+ 283                when (1) race_label = 'Mexican American';
+ 284                when (2) race_label = 'Other Hispanic';
+ 285                when (3) race_label = 'Non-Hispanic White';
+ 286                when (4) race_label = 'Non-Hispanic Black';
+ 287                when (6) race_label = 'Non-Hispanic Asian';
+ 288                otherwise race_label = 'Other/Multiracial';
+ 289            end;
+ 290        
+ 291            /* Sex label */
+ 292            length sex_label $8;
+ 293            if sex = 1 then sex_label = 'Male';
+ 294            else if sex = 2 then sex_label = 'Female';
+ 295        
+ 296            /* Age groups */
+ 297            length age_group $10;
+ 298            if      age < 30 then age_group = '18-29';
+ 299            else if age < 45 then age_group = '30-44';
+ 300            else if age < 60 then age_group = '45-59';
+ 301            else                  age_group = '60+';
+ 302        
+ 303            /* MEC exam weight for survey-weighted analyses */
+ 304            exam_wt = WTMEC2YR;
+ 305        
+ 306            keep SEQN age sex sex_label race_label age_group pir exam_wt;
+ 307        
+ 308            label age        = 'Age (years)'
+ 309                  sex_label  = 'Sex'
+ 310                  race_label = 'Race/Ethnicity'
+ 311                  age_group  = 'Age Group'
+ 312                  pir        = 'Poverty-to-Income Ratio'
+ 313                  exam_wt    = 'MEC Exam Sample Weight';
+ 314        run;
+ 
+ NOTE: There were 8153 observations read from the data set WORK.DEMO.
+       WHERE RIDAGEYR>=18;
+ NOTE: The data set WORK.DEMO_CLEAN has 8153 observations and 8 variables.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              2781.68k
+       OS Memory           30888.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        227  Switch Count  5
+       Page Faults                       0
+       Page Reclaims                     408
+       Page Swaps                        0
+       Voluntary Context Switches        20
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           1552
+       
+ 
+ 315        
+ 316        
+ 317        /* ---- 3.2  Body measures: BMI, waist circumference ----------------------- */
+ 318        data work.bmx_clean;
+ 319            set work.bmx;
+ 320            where BMXBMI > 0;       /* Exclude missing/invalid BMI                  */
+ 321        
+ 322            bmi         = BMXBMI;
+ 323            waist_cm    = BMXWAIST;
+ 324            weight_kg   = BMXWT;
+ 325            height_cm   = BMXHT;
+ 326        
+ 327            /* WHO obesity classification */
+ 328            length bmi_cat $20;
+ 329            if      bmi < 18.5 then bmi_cat = 'Underweight';
+ 330            else if bmi < 25.0 then bmi_cat = 'Normal';
+ 331            else if bmi < 30.0 then bmi_cat = 'Overweight';
+ 332            else                    bmi_cat = 'Obese';
+ 333        
+ 334            /* Binary outcome: obese vs not (BMI >= 30) */
+ 335            obese = (bmi >= 30);
+ 336        
+ 337            keep SEQN bmi waist_cm weight_kg height_cm bmi_cat obese;
+ 338        
+ 339            label bmi        = 'Body Mass Index (kg/m2)'
+ 340                  waist_cm   = 'Waist Circumference (cm)'
+ 341                  weight_kg  = 'Weight (kg)'
+ 342                  height_cm  = 'Height (cm)'
+ 343                  bmi_cat    = 'BMI Category'
+ 344                  obese      = 'Obese (BMI >= 30)';
+ 345        run;
+ 
+ NOTE: There were 8471 observations read from the data set WORK.BMX.
+       WHERE BMXBMI>0;
+ NOTE: The data set WORK.BMX_CLEAN has 8471 observations and 7 variables.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.01 seconds
+       memory              2629.53k
+       OS Memory           30632.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        228  Switch Count  5
+       Page Faults                       0
+       Page Reclaims                     364
+       Page Swaps                        0
+       Voluntary Context Switches        19
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           1296
+       
+ 
+ 346        
+ 347        
+ 348        /* ---- 3.3  Physical activity: moderate/vigorous frequency, sedentary time  */
+ 349        /*   PAQ_L variable structure changed completely in the 2021-2023 cycle.     */
+ 350        /*   The previous yes/no + days/week format was replaced with:               */
+ 351        /*     PAD790Q / PAD790U - Moderate LTPA frequency + unit (D/W/M/Y)         */
+ 352        /*     PAD800            - Minutes per session: moderate                     */
+ 353        /*     PAD810Q / PAD810U - Vigorous LTPA frequency + unit (D/W/M/Y)         */
+ 354        /*     PAD820            - Minutes per session: vigorous                     */
+ 355        /*     PAD680            - Minutes sedentary per day (unchanged)             */
+ 356        /*                                                                           */
+ 357        /*   CDC PA guideline (2018): >= 150 min/week moderate-equivalent activity   */
+ 358        /*   MET-minutes/week = (mod_min_wk * 4) + (vig_min_wk * 8)                 */
+ 359        /*   Guideline met if MET-min/week >= 600                                    */
+ 360        /* -------------------------------------------------------------------------- */
+ 361        data work.paq_clean;
+ 362            set work.paq;
+ 363        
+ 364            /* --- Step 1: Convert moderate frequency to sessions per week ---------- */
+ 365            /* Unit codes: D=Day, W=Week, M=Month, Y=Year                            */
+ 366            if PAD790Q in (7777, 9999, .) or missing(PAD790U) then mod_freq_wk = .;
+ 367            else do;
+ 368                select (PAD790U);
+ 369                    when ('D') mod_freq_wk = PAD790Q * 7;    /* sessions/day -> /week */
+ 370                    when ('W') mod_freq_wk = PAD790Q;
+ 371                    when ('M') mod_freq_wk = PAD790Q / 4.33;
+ 372                    when ('Y') mod_freq_wk = PAD790Q / 52;
+ 373                    otherwise  mod_freq_wk = .;
+ 374                end;
+ 375            end;
+ 376            /* No moderate activity reported (frequency = 0) */
+ 377            if PAD790Q = 0 then mod_freq_wk = 0;
+ 378        
+ 379            /* --- Step 2: Convert vigorous frequency to sessions per week ---------- */
+ 380            if PAD810Q in (7777, 9999, .) or missing(PAD810U) then vig_freq_wk = .;
+ 381            else do;
+ 382                select (PAD810U);
+ 383                    when ('D') vig_freq_wk = PAD810Q * 7;
+ 384                    when ('W') vig_freq_wk = PAD810Q;
+ 385                    when ('M') vig_freq_wk = PAD810Q / 4.33;
+ 386                    when ('Y') vig_freq_wk = PAD810Q / 52;
+ 387                    otherwise  vig_freq_wk = .;
+ 388                end;
+ 389            end;
+ 390            if PAD810Q = 0 then vig_freq_wk = 0;
+ 391        
+ 392            /* --- Step 3: Total minutes per week for each intensity ---------------- */
+ 393            /* Minutes per session (PAD800, PAD820): already in minutes              */
+ 394            if not missing(mod_freq_wk) and not missing(PAD800) and PAD800 < 9999
+ 395                then mod_min_wk = mod_freq_wk * PAD800;
+ 396            else if mod_freq_wk = 0
+ 397                then mod_min_wk = 0;
+ 398            else mod_min_wk = .;
+ 399        
+ 400            if not missing(vig_freq_wk) and not missing(PAD820) and PAD820 < 9999
+ 401                then vig_min_wk = vig_freq_wk * PAD820;
+ 402            else if vig_freq_wk = 0
+ 403                then vig_min_wk = 0;
+ 404            else vig_min_wk = .;
+ 405        
+ 406            /* --- Step 4: Approximate days/week for backward compatibility ----------
+ 407               Round frequency to nearest whole day, capped at 7.                   */
+ 408            if not missing(mod_freq_wk) then mod_days = min(7, round(mod_freq_wk));
+ 409            else mod_days = .;
+ 410        
+ 411            if not missing(vig_freq_wk) then vig_days = min(7, round(vig_freq_wk));
+ 412            else vig_days = .;
+ 413        
+ 414            /* Total active days (capped at 7) */
+ 415            if not missing(vig_days) and not missing(mod_days) then
+ 416                active_days = min(7, vig_days + mod_days);
+ 417        
+ 418            /* --- Step 5: Sedentary minutes per day (variable unchanged) ----------- */
+ 419            if PAD680 in (9999, .) then sed_min = .;
+ 420            else sed_min = min(PAD680, 1200);   /* cap at 20 hours */
+ 421        
+ 422            /* --- Step 6: CDC PA guidelines (2018 Physical Activity Guidelines)------
+ 423               Guideline: >= 150 min/week moderate OR >= 75 min/week vigorous,
+ 424               or equivalent combination. Use MET-min approach:
+ 425                 MET-min/week = (mod_min_wk * 4.0) + (vig_min_wk * 8.0) >= 600    */
+ 426            if not missing(mod_min_wk) or not missing(vig_min_wk) then do;
+ 427                met_min_wk = coalesce(mod_min_wk, 0) * 4.0
+ 428                           + coalesce(vig_min_wk, 0) * 8.0;
+ 429                meets_pa_guidelines = (met_min_wk >= 600);
+ 430            end;
+ 431            else do;
+ 432                met_min_wk = .;
+ 433                meets_pa_guidelines = .;
+ 434            end;
+ 435        
+ 436            /* --- Step 7: Activity level category ---------------------------------- */
+ 437            length activity_cat $12;
+ 438            if      vig_min_wk >= 75  or met_min_wk >= 600 then activity_cat = 'Active';
+ 439            else if mod_min_wk > 0    or vig_min_wk > 0    then activity_cat = 'Low Active';
+ 440            else if mod_min_wk = 0    and vig_min_wk = 0   then activity_cat = 'Sedentary';
+ 441            else                                                 activity_cat = 'Unknown';
+ 442        
+ 443            keep SEQN vig_days mod_days vig_min_wk mod_min_wk met_min_wk
+ 444                 sed_min active_days meets_pa_guidelines activity_cat;
+ 445        
+ 446            label vig_days           = 'Vigorous Activity Days/Week (approx)'
+ 447                  mod_days           = 'Moderate Activity Days/Week (approx)'
+ 448                  vig_min_wk         = 'Vigorous Activity Minutes/Week'
+ 449                  mod_min_wk         = 'Moderate Activity Minutes/Week'
+ 450                  met_min_wk         = 'Total MET-minutes/Week (mod*4 + vig*8)'
+ 451                  sed_min            = 'Sedentary Minutes/Day'
+ 452                  active_days        = 'Total Active Days/Week'
+ 453                  meets_pa_guidelines= 'Meets CDC PA Guidelines (MET-min >= 600)'
+ 454                  activity_cat       = 'Physical Activity Level';
+ 455        run;
+ 
+ NOTE: There were 8153 observations read from the data set WORK.PAQ.
+ NOTE: The data set WORK.PAQ_CLEAN has 8153 observations and 10 variables.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              2208.56k
+       OS Memory           29608.00k
+       Timestamp           05/01/2026 09:19:32 PM
+       Step Count                        229  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     155
+       Page Swaps                        0
+       Voluntary Context Switches        10
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           1552
+       
+ 
+ 456        
+ 457        
+ 458        /* ---- 3.4  Dietary recall Day 1: key nutrients --------------------------- */
+ 459        /*   DR1TOT_L key variables:                                                 */
+ 460        /*     DR1TKCAL - Total calories (kcal)                                      */
+ 461        /*     DR1TPROT - Protein (g)                                                */
+ 462        /*     DR1TTFAT - Total fat (g)                                              */
+ 463        /*     DR1TSFAT - Saturated fat (g)                                          */
+ 464        /*     DR1TSUGR - Total sugars (g)                                           */
+ 465        /*     DR1TFIBE - Dietary fiber (g)                                          */
+ 466        /*     DR1TSODI - Sodium (mg)                                                */
+ 467        /*     DR1DRSTZ - Dietary recall status (1=reliable complete)                */
+ 468        /* -------------------------------------------------------------------------- */
+ 469        data work.diet_clean;
+ 470            set work.diet;
+ 471        
+ 472            /* Keep only reliable, complete dietary recalls */
+ 473            where DR1DRSTZ = 1;
+ 474        
+ 475            calories  = DR1TKCAL;
+ 476            protein_g = DR1TPROT;
+ 477            fat_g     = DR1TTFAT;
+ 478            satfat_g  = DR1TSFAT;
+ 479            sugar_g   = DR1TSUGR;
+ 480            fiber_g   = DR1TFIBE;
+ 481            sodium_mg = DR1TSODI;
+ 482        
+ 483            /* Nutrient density: protein as % of total calories (4 kcal/g) */
+ 484            if calories > 0 then pct_protein = (protein_g * 4 / calories) * 100;
+ 485        
+ 486            /* Flag high sugar intake (> 100g/day) */
+ 487            flag_high_sugar = (sugar_g > 100);
+ 488        
+ 489            /* Flag low fiber intake (< 15g/day; US median is ~16g) */
+ 490            flag_low_fiber  = (fiber_g < 15);
+ 491        
+ 492            /* Log-transform calories for modeling (right-skewed) */
+ 493            if calories > 0 then log_calories = log(calories);
+ 494        
+ 495            keep SEQN calories protein_g fat_g satfat_g sugar_g fiber_g sodium_mg
+ 496                 pct_protein flag_high_sugar flag_low_fiber log_calories;
+ 497        
+ 498            label calories        = 'Total Calories (kcal/day)'
+ 499                  protein_g       = 'Protein (g/day)'
+ 500                  fat_g           = 'Total Fat (g/day)'
+ 501                  satfat_g        = 'Saturated Fat (g/day)'
+ 502                  sugar_g         = 'Total Sugars (g/day)'
+ 503                  fiber_g         = 'Dietary Fiber (g/day)'
+ 504                  sodium_mg       = 'Sodium (mg/day)'
+ 505                  pct_protein     = 'Protein as % of Calories'
+ 506                  flag_high_sugar = 'High Sugar Intake (>100g/day)'
+ 507                  flag_low_fiber  = 'Low Fiber Intake (<15g/day)'
+ 508                  log_calories    = 'Log(Calories)';
+ 509        run;
+ 
+ NOTE: There were 6694 observations read from the data set WORK.DIET.
+       WHERE DR1DRSTZ=1;
+ NOTE: The data set WORK.DIET_CLEAN has 6694 observations and 12 variables.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2817.87k
+       OS Memory           30632.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        230  Switch Count  5
+       Page Faults                       0
+       Page Reclaims                     354
+       Page Swaps                        0
+       Voluntary Context Switches        18
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           1288
+       
+ 
+ 510        
+ 511        
+ 512        /* ---- 3.5  Blood pressure: mean systolic and diastolic ------------------- */
+ 513        data work.bp_clean;
+ 514            set work.bp;
+ 515        
+ 516            /* BPXO_L contains oscillometric readings; use first reading */
+ 517            sbp = BPXOSY1;   /* Systolic  */
+ 518            dbp = BPXODI1;   /* Diastolic */
+ 519        
+ 520            /* Hypertension flag: SBP >= 130 or DBP >= 80 (ACC/AHA 2017 definition) */
+ 521            if not missing(sbp) and not missing(dbp) then
+ 522                flag_htn = (sbp >= 130 or dbp >= 80);
+ 523        
+ 524            where not missing(BPXOSY1);
+ 525            keep SEQN sbp dbp flag_htn;
+ 526        
+ 527            label sbp      = 'Systolic Blood Pressure (mmHg)'
+ 528                  dbp      = 'Diastolic Blood Pressure (mmHg)'
+ 529                  flag_htn = 'Hypertension (SBP>=130 or DBP>=80)';
+ 530        run;
+ 
+ NOTE: There were 7517 observations read from the data set WORK.BP.
+       WHERE not MISSING(BPXOSY1);
+ NOTE: The data set WORK.BP_CLEAN has 7517 observations and 4 variables.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              1853.12k
+       OS Memory           29864.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        231  Switch Count  5
+       Page Faults                       0
+       Page Reclaims                     219
+       Page Swaps                        0
+       Voluntary Context Switches        18
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           520
+       
+ 
+ 531        
+ 532        
+ 533        /* ---- 3.6  Merge all five cleaned files on SEQN -------------------------- */
+ 534        proc sql;
+ 535            create table work.analytic as
+ 536            select
+ 537                d.SEQN,
+ 538                d.age,
+ 539                d.sex,
+ 540                d.sex_label,
+ 541                d.race_label,
+ 542                d.age_group,
+ 543                d.pir,
+ 544                d.exam_wt,
+ 545        
+ 546                /* Body measures */
+ 547                b.bmi,
+ 548                b.waist_cm,
+ 549                b.weight_kg,
+ 550                b.bmi_cat,
+ 551                b.obese,
+ 552        
+ 553                /* Physical activity */
+ 554                p.vig_days,
+ 555                p.mod_days,
+ 556                p.vig_min_wk,
+ 557                p.mod_min_wk,
+ 558                p.met_min_wk,
+ 559                p.sed_min,
+ 560                p.active_days,
+ 561                p.meets_pa_guidelines,
+ 562                p.activity_cat,
+ 563        
+ 564                /* Dietary intake */
+ 565                dt.calories,
+ 566                dt.protein_g,
+ 567                dt.fat_g,
+ 568                dt.satfat_g,
+ 569                dt.sugar_g,
+ 570                dt.fiber_g,
+ 571                dt.sodium_mg,
+ 572                dt.pct_protein,
+ 573                dt.flag_high_sugar,
+ 574                dt.flag_low_fiber,
+ 575                dt.log_calories,
+ 576        
+ 577                /* Blood pressure */
+ 578                bp.sbp,
+ 579                bp.dbp,
+ 580                bp.flag_htn
+ 581        
+ 582            from      work.demo_clean  d
+ 583            left join work.bmx_clean   b  on d.SEQN = b.SEQN
+ 584            left join work.paq_clean   p  on d.SEQN = p.SEQN
+ 585            left join work.diet_clean  dt on d.SEQN = dt.SEQN
+ 586            left join work.bp_clean    bp on d.SEQN = bp.SEQN
+ 587        
+ 588            /* Require BMI for the outcome variable */
+ 589            where b.bmi is not missing
+ 590            order by d.SEQN;
+ NOTE: Table WORK.ANALYTIC created, with 6235 rows and 36 columns.
+ 
+ 591        quit;
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.04 seconds
+       user cpu time       0.03 seconds
+       system cpu time     0.02 seconds
+       memory              16515.95k
+       OS Memory           43208.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        232  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     2307
+       Page Swaps                        0
+       Voluntary Context Switches        80
+       Involuntary Context Switches      9
+       Block Input Operations            0
+       Block Output Operations           9240
+       
+ 
+ 592        
+ 593        proc sql noprint;
+ 594            select count(*) into :N_ANALYTIC trimmed from work.analytic;
+ 595        quit;
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              6956.71k
+       OS Memory           36008.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        233  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     245
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 596        %put NOTE: Final analytic cohort N = &N_ANALYTIC.;
+ NOTE: Final analytic cohort N = 6235
+ 597        
+ 598        
+ 599        /******************************************************************************/
+ 600        /* SECTION 4: EXPLORATORY DATA ANALYSIS                                       */
+ 601        /*   4.1  Sample characteristics                                              */
+ 602        /*   4.2  Outcome distribution: BMI and obesity prevalence                   */
+ 603        /*   4.3  Physical activity patterns                                          */
+ 604        /*   4.4  Dietary intake summary                                              */
+ 605        /*   4.5  Cross-tabs: obesity by activity level, sex, age group              */
+ 606        /******************************************************************************/
+ 607        
+ 608        title2 "Section 4 - Exploratory Data Analysis";
+ 609        
+ 610        /* ---- 4.1  Sample characteristics --------------------------------------- */
+ 611        %summarize_var(dsn=work.analytic, var=age,      label=Age (years));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 54.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.01 seconds
+       memory              8922.34k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        234  Switch Count  1
+       Page Faults                       0
+       Page Reclaims                     1863
+       Page Swaps                        0
+       Voluntary Context Switches        23
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 612        %freq_table(dsn=work.analytic,    var=sex_label, label=Sex);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 55.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2273.06k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        235  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        19
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 613        %freq_table(dsn=work.analytic,    var=age_group, label=Age Group);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 56.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2096.81k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        236  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        24
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 614        %freq_table(dsn=work.analytic,    var=race_label,label=Race/Ethnicity);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 57.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2158.00k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        237  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        23
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 615        
+ 616        /* ---- 4.2  Obesity and BMI distribution ---------------------------------- */
+ 617        %freq_table(dsn=work.analytic,    var=bmi_cat,   label=BMI Category);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 58.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2154.18k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        238  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        21
+       Involuntary Context Switches      2
+       Block Input Operations            0
+       Block Output Operations           280
+       
+ 
+ 618        %freq_table(dsn=work.analytic,    var=obese,     label=Obese (BMI>=30));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 59.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2149.46k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        239  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        19
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 619        %summarize_var(dsn=work.analytic, var=bmi,        label=BMI);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 60.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.01 seconds
+       memory              8273.71k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        240  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        28
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 620        %summarize_var(dsn=work.analytic, var=waist_cm,   label=Waist Circumference (cm));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 61.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              8225.59k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        241  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        27
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 621        
+ 622        /* ---- 4.3  Physical activity patterns ------------------------------------ */
+ 623        %freq_table(dsn=work.analytic,    var=activity_cat,        label=Physical Activity Level);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 62.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2150.87k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        242  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        21
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 624        %freq_table(dsn=work.analytic,    var=meets_pa_guidelines, label=Meets CDC PA Guidelines);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 63.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2151.15k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        243  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        19
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           280
+       
+ 
+ 625        %summarize_var(dsn=work.analytic, var=vig_min_wk, label=Vigorous Minutes/Week);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 64.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.01 seconds
+       memory              8273.71k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        244  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        29
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 626        %summarize_var(dsn=work.analytic, var=mod_min_wk, label=Moderate Minutes/Week);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 65.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              8273.71k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        245  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        28
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 627        %summarize_var(dsn=work.analytic, var=met_min_wk, label=Total MET-min/Week);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 66.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.01 seconds
+       memory              8273.71k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        246  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        27
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 628        %summarize_var(dsn=work.analytic, var=vig_days,   label=Vigorous Days/Week (approx));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 67.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              8273.71k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        247  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        28
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 629        %summarize_var(dsn=work.analytic, var=mod_days,   label=Moderate Days/Week (approx));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 68.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.01 seconds
+       memory              8273.71k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        248  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        26
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           16
+       
+ 
+ 630        %summarize_var(dsn=work.analytic, var=sed_min,   label=Sedentary Minutes/Day);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 69.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              8161.59k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        249  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        27
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 631        
+ 632        /* ---- 4.4  Dietary intake summary --------------------------------------- */
+ 633        %summarize_var(dsn=work.analytic, var=calories,  label=Daily Calories (kcal));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 70.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.00 seconds
+       memory              8529.71k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        250  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        29
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 634        %summarize_var(dsn=work.analytic, var=protein_g, label=Protein (g/day));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 71.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              8657.71k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        251  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        28
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 635        %summarize_var(dsn=work.analytic, var=sugar_g,   label=Total Sugars (g/day));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 72.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              8545.59k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        252  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        27
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 636        %summarize_var(dsn=work.analytic, var=fiber_g,   label=Dietary Fiber (g/day));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 73.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.01 seconds
+       memory              8337.71k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        253  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        26
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           16
+       
+ 
+ 637        %freq_table(dsn=work.analytic,    var=flag_high_sugar, label=High Sugar Intake (>100g));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 74.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2152.25k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        254  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        20
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           272
+       
+ 
+ 638        %freq_table(dsn=work.analytic,    var=flag_low_fiber,  label=Low Fiber Intake (<15g));
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 75.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2039.03k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        255  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        23
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 639        
+ 640        /* ---- 4.5  Bivariate: key outcomes by activity level -------------------- */
+ 641        %profile_group(
+ 642            dsn      = work.analytic,
+ 643            groupvar = activity_cat,
+ 644            outvars  = bmi waist_cm calories sugar_g fiber_g sed_min,
+ 645            title    = BMI and Diet Patterns by Physical Activity Level
+ 646        );
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed page 76.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.05 seconds
+       user cpu time       0.05 seconds
+       system cpu time     0.01 seconds
+       memory              9168.04k
+       OS Memory           36288.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        256  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     1668
+       Page Swaps                        0
+       Voluntary Context Switches        34
+       Involuntary Context Switches      2
+       Block Input Operations            0
+       Block Output Operations           16
+       
+ 
+ 647        
+ 648        %profile_group(
+ 649            dsn      = work.analytic,
+ 650            groupvar = bmi_cat,
+ 651            outvars  = vig_min_wk mod_min_wk met_min_wk sed_min calories fiber_g sugar_g,
+ 652            title    = Physical Activity and Diet by BMI Category
+ 653        );
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE MEANS printed pages 77-78.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.05 seconds
+       user cpu time       0.05 seconds
+       system cpu time     0.00 seconds
+       memory              8854.35k
+       OS Memory           36288.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        257  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     1667
+       Page Swaps                        0
+       Voluntary Context Switches        41
+       Involuntary Context Switches      3
+       Block Input Operations            0
+       Block Output Operations           16
+       
+ 
+ 654        
+ 655        /* ---- 4.6  Cross-tabulation: obesity prevalence by activity and sex ------ */
+ 656        title3 "Obesity Prevalence by Physical Activity Level";
+ 657        proc freq data=work.analytic;
+ 658            tables activity_cat * obese / nocol nopercent chisq;
+ 659        run;
+ 
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 79.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.02 seconds
+       user cpu time       0.03 seconds
+       system cpu time     0.00 seconds
+       memory              2617.65k
+       OS Memory           31404.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        258  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     376
+       Page Swaps                        0
+       Voluntary Context Switches        25
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           552
+       
+ 
+ 660        
+ 661        title3 "Obesity Prevalence by Sex";
+ 662        proc freq data=work.analytic;
+ 663            tables sex_label * obese / nocol nopercent chisq;
+ 664        run;
+ 
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 80.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.02 seconds
+       user cpu time       0.03 seconds
+       system cpu time     0.00 seconds
+       memory              2491.93k
+       OS Memory           31404.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        259  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     377
+       Page Swaps                        0
+       Voluntary Context Switches        26
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           528
+       
+ 
+ 665        
+ 666        title3 "Obesity Prevalence by Age Group";
+ 667        proc freq data=work.analytic;
+ 668            tables age_group * obese / nocol nopercent chisq;
+ 669        run;
+ 
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The PROCEDURE FREQ printed page 81.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.02 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.01 seconds
+       memory              2484.18k
+       OS Memory           31404.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        260  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     377
+       Page Swaps                        0
+       Voluntary Context Switches        28
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           544
+       
+ 
+ 670        
+ 671        
+ 672        /******************************************************************************/
+ 673        /* SECTION 5: FEATURE ENGINEERING                                             */
+ 674        /*   Derive additional analytic variables before modeling:                    */
+ 675        /*   - Composite activity score                                               */
+ 676        /*   - Diet quality score                                                     */
+ 677        /*   - Sedentary behavior flag                                                */
+ 678        /*   - Impute small amounts of missing data via median                        */
+ 679        /******************************************************************************/
+ 680        
+ 681        title2 "Section 5 - Feature Engineering";
+ 682        
+ 683        /* ---- 5.1  Compute medians for imputation -------------------------------- */
+ 684        %macro impute_median(dsn=, var=, mvar=);
+ 685            %global &mvar.;
+ 686            proc means data=&dsn. median noprint;
+ 687                var &var.;
+ 688                output out=_med median=med_val;
+ 689            run;
+ 690            data _null_;
+ 691                set _med;
+ 692                call symputx("&mvar.", med_val, 'G');
+ 693            run;
+ 694            proc datasets library=work nolist; delete _med; quit;
+ 695        %mend impute_median;
+ 696        
+ 697        %impute_median(dsn=work.analytic, var=sed_min,   mvar=med_sed);
+ 
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The data set WORK._MED has 1 observations and 3 variables.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              8519.87k
+       OS Memory           37324.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        261  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     1904
+       Page Swaps                        0
+       Voluntary Context Switches        37
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 
+ NOTE: There were 1 observations read from the data set WORK._MED.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              728.68k
+       OS Memory           30116.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        262  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     57
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 
+ NOTE: Deleting WORK._MED (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              477.00k
+       OS Memory           30116.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        263  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     48
+       Page Swaps                        0
+       Voluntary Context Switches        12
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ 698        %impute_median(dsn=work.analytic, var=calories,  mvar=med_cal);
+ 
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The data set WORK._MED has 1 observations and 3 variables.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              8775.87k
+       OS Memory           37324.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        264  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     1904
+       Page Swaps                        0
+       Voluntary Context Switches        33
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 
+ NOTE: There were 1 observations read from the data set WORK._MED.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              728.65k
+       OS Memory           30116.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        265  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     57
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 
+ NOTE: Deleting WORK._MED (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              477.00k
+       OS Memory           30116.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        266  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     48
+       Page Swaps                        0
+       Voluntary Context Switches        12
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ 699        %impute_median(dsn=work.analytic, var=fiber_g,   mvar=med_fib);
+ 
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The data set WORK._MED has 1 observations and 3 variables.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.01 seconds
+       memory              8583.87k
+       OS Memory           37324.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        267  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     1904
+       Page Swaps                        0
+       Voluntary Context Switches        33
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 
+ NOTE: There were 1 observations read from the data set WORK._MED.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              728.68k
+       OS Memory           30116.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        268  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     57
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 
+ NOTE: Deleting WORK._MED (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              477.00k
+       OS Memory           30116.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        269  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     48
+       Page Swaps                        0
+       Voluntary Context Switches        13
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ 700        %impute_median(dsn=work.analytic, var=sugar_g,   mvar=med_sug);
+ 
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The data set WORK._MED has 1 observations and 3 variables.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              8903.87k
+       OS Memory           37324.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        270  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     1904
+       Page Swaps                        0
+       Voluntary Context Switches        35
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 
+ NOTE: There were 1 observations read from the data set WORK._MED.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              728.65k
+       OS Memory           30116.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        271  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     57
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ 
+ NOTE: Deleting WORK._MED (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              477.00k
+       OS Memory           30116.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        272  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     48
+       Page Swaps                        0
+       Voluntary Context Switches        11
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ 701        %impute_median(dsn=work.analytic, var=pir,       mvar=med_pir);
+ 
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The data set WORK._MED has 1 observations and 3 variables.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.01 seconds
+       memory              8519.87k
+       OS Memory           37324.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        273  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     1904
+       Page Swaps                        0
+       Voluntary Context Switches        30
+       Involuntary Context Switches      2
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 
+ NOTE: There were 1 observations read from the data set WORK._MED.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              728.68k
+       OS Memory           30116.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        274  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     57
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 
+ NOTE: Deleting WORK._MED (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              477.00k
+       OS Memory           30116.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        275  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     48
+       Page Swaps                        0
+       Voluntary Context Switches        10
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           16
+       
+ 
+ 702        
+ 703        %put NOTE: Median imputation values:;
+ NOTE: Median imputation values:
+ 704        %put NOTE:   Sedentary min = &med_sed. | Calories = &med_cal.;
+ NOTE:   Sedentary min = 300 | Calories = 1845.5
+ 705        %put NOTE:   Fiber g       = &med_fib. | Sugar g  = &med_sug.;
+ NOTE:   Fiber g       = 14.1 | Sugar g  = 81.215
+ 706        %put NOTE:   PIR           = &med_pir.;
+ NOTE:   PIR           = 2.8
+ 707        
+ 708        /* ---- 5.2  Derive composite features ------------------------------------ */
+ 709        data work.analytic_fe;
+ 710            set work.analytic;
+ 711        
+ 712            /* Median imputation for variables with moderate missingness */
+ 713            if missing(sed_min)  then sed_min  = &med_sed.;
+ 714            if missing(calories) then calories = &med_cal.;
+ 715            if missing(fiber_g)  then fiber_g  = &med_fib.;
+ 716            if missing(sugar_g)  then sugar_g  = &med_sug.;
+ 717            if missing(pir)      then pir      = &med_pir.;
+ 718        
+ 719            /* Zero-fill activity days (no data = no activity reported) */
+ 720            if missing(vig_days)    then vig_days    = 0;
+ 721            if missing(mod_days)    then mod_days    = 0;
+ 722            if missing(vig_min_wk)  then vig_min_wk  = 0;
+ 723            if missing(mod_min_wk)  then mod_min_wk  = 0;
+ 724            if missing(met_min_wk)  then met_min_wk  = 0;
+ 725            if missing(active_days) then active_days = 0;
+ 726            if missing(meets_pa_guidelines) then meets_pa_guidelines = 0;
+ 727            if missing(flag_high_sugar)     then flag_high_sugar      = 0;
+ 728            if missing(flag_low_fiber)      then flag_low_fiber       = 0;
+ 729            if missing(flag_htn)            then flag_htn             = 0;
+ 730        
+ 731            /* --- Composite activity score (0-10 scale) ---
+ 732               Based on MET-min/week (CDC guideline = 600 MET-min/week = score 5).
+ 733               Penalises high sedentary time. Capped at 10, floored at 0.          */
+ 734            if not missing(met_min_wk) then
+ 735                activity_score = min(10, max(0, (met_min_wk / 120) - (sed_min / 240)));
+ 736            else
+ 737                activity_score = max(0, -(sed_min / 240));   /* activity unknown   */
+ 738        
+ 739            /* --- Simple diet quality score (0-4 points) ---
+ 740               +1 for adequate fiber (>=15g), +1 for low sugar (<50g),
+ 741               +1 for adequate protein (>=15% calories), +1 for low sodium (<2300mg) */
+ 742            diet_score = (fiber_g >= 15)
+ 743                       + (sugar_g < 50)
+ 744                       + (pct_protein >= 15)
+ 745                       + (sodium_mg < 2300);
+ 746        
+ 747            /* --- Sedentary behavior flag: >= 8 hours/day sitting ---------------  */
+ 748            flag_high_sedentary = (sed_min >= 480);
+ 749        
+ 750            /* --- Income category from poverty-to-income ratio ------------------- */
+ 751            length income_cat $15;
+ 752            if      pir < 1.0 then income_cat = 'Below Poverty';
+ 753            else if pir < 2.0 then income_cat = 'Low Income';
+ 754            else if pir < 4.0 then income_cat = 'Middle Income';
+ 755            else                    income_cat = 'High Income';
+ 756        
+ 757            /* --- Log-transform sedentary minutes for modeling (right-skewed) --- */
+ 758            if sed_min > 0 then log_sed = log(sed_min);
+ 759        
+ 760            label activity_score      = 'Composite Activity Score (0-10)'
+ 761                  diet_score          = 'Diet Quality Score (0-4)'
+ 762                  flag_high_sedentary = 'High Sedentary Behavior (>=8 hr/day)'
+ 763                  income_cat          = 'Income Category'
+ 764                  log_sed             = 'Log(Sedentary Minutes)';
+ 765        run;
+ 
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC.
+ NOTE: The data set WORK.ANALYTIC_FE has 6235 observations and 41 variables.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              3775.31k
+       OS Memory           32936.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        276  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     528
+       Page Swaps                        0
+       Voluntary Context Switches        12
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           4616
+       
+ 
+ 766        
+ 767        /* Confirm N after feature engineering */
+ 768        proc sql noprint;
+ 769            select count(*) into :N_FE trimmed from work.analytic_fe;
+ 770        quit;
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              6958.59k
+       OS Memory           36008.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        277  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     244
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 771        %put NOTE: Analytic dataset after feature engineering N = &N_FE.;
+ NOTE: Analytic dataset after feature engineering N = 6235
+ 772        
+ 773        /* Quick profile of new composite variables */
+ 774        %summarize_var(dsn=work.analytic_fe, var=activity_score, label=Composite Activity Score);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC_FE.
+ NOTE: The PROCEDURE MEANS printed page 82.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.01 seconds
+       memory              8284.28k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        278  Switch Count  1
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        23
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 775        %summarize_var(dsn=work.analytic_fe, var=diet_score,     label=Diet Quality Score);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC_FE.
+ NOTE: The PROCEDURE MEANS printed page 83.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              8284.28k
+       OS Memory           37064.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        279  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1842
+       Page Swaps                        0
+       Voluntary Context Switches        28
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 776        %freq_table(dsn=work.analytic_fe,    var=flag_high_sedentary, label=High Sedentary Behavior);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC_FE.
+ NOTE: The PROCEDURE FREQ printed page 84.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2154.06k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        280  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        22
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           280
+       
+ 
+ 777        %freq_table(dsn=work.analytic_fe,    var=income_cat,     label=Income Category);
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC_FE.
+ NOTE: The PROCEDURE FREQ printed page 85.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              2155.81k
+       OS Memory           31144.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        281  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     311
+       Page Swaps                        0
+       Voluntary Context Switches        21
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           272
+       
+ 
+ 778        
+ 779        
+ 780        /******************************************************************************/
+ 781        /* SECTION 6: LOGISTIC REGRESSION — PREDICTORS OF OBESITY                    */
+ 782        /*   Outcome: obese (BMI >= 30, binary 1/0)                                  */
+ 783        /*   Model A: Physical activity predictors only                               */
+ 784        /*   Model B: Dietary predictors only                                         */
+ 785        /*   Model C: Full model — activity + diet + demographics                    */
+ 786        /*                                                                            */
+ 787        /*   Note on survey weights: NHANES uses complex survey design. Proper        */
+ 788        /*   national estimates require PROC SURVEYLOGISTIC with exam_wt. For        */
+ 789        /*   a portfolio demonstration, we show both unweighted PROC LOGISTIC        */
+ 790        /*   (simpler, clear code) and note the survey-weighted approach.            */
+ 791        /******************************************************************************/
+ 792        
+ 793        title2 "Section 6 - Logistic Regression: Predictors of Obesity";
+ 794        
+ 795        /* Keep graphics off for clean .log/.lst export in SAS Studio.
+ 796           This avoids image-write permission errors for generated OR plots. */
+ 797        ods graphics off;
+ 798        
+ 799        /* ---- Model A: Physical Activity Only ------------------------------------ */
+ 800        proc logistic data=work.analytic_fe descending;
+ 801            class activity_cat (ref='Sedentary') / param=ref;
+ 802            model obese(event='1') =
+ 803                  activity_score
+ 804                  meets_pa_guidelines
+ 805                  met_min_wk
+ 806                  vig_min_wk
+ 807                  mod_min_wk
+ 808                  activity_cat
+ 809                  sed_min
+ 810                  flag_high_sedentary
+ 811                  / clodds=wald lackfit rsquare ctable pprob=(0.3 0.4 0.5);
+ 812            oddsratio activity_cat / cl=wald;
+ 813            output out=work.scored_a p=pred_prob_a;
+ 814            title3 "Model A: Physical Activity Predictors of Obesity";
+ 815        run;
+ 
+ NOTE: PROC LOGISTIC is modeling the probability that obese=1.
+ NOTE: Convergence criterion (GCONV=1E-8) satisfied.
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC_FE.
+ NOTE: The data set WORK.SCORED_A has 6235 observations and 43 variables.
+ NOTE: The PROCEDURE LOGISTIC printed pages 86-89.
+ NOTE: PROCEDURE LOGISTIC used (Total process time):
+       real time           0.13 seconds
+       user cpu time       0.13 seconds
+       system cpu time     0.00 seconds
+       memory              6776.06k
+       OS Memory           35772.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        282  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     1163
+       Page Swaps                        0
+       Voluntary Context Switches        25
+       Involuntary Context Switches      6
+       Block Input Operations            0
+       Block Output Operations           4960
+       
+ 
+ 816        
+ 817        /* ---- Model B: Dietary Predictors Only ----------------------------------- */
+ 818        proc logistic data=work.analytic_fe descending;
+ 819            model obese(event='1') =
+ 820                  log_calories
+ 821                  pct_protein
+ 822                  sugar_g
+ 823                  fiber_g
+ 824                  sodium_mg
+ 825                  diet_score
+ 826                  flag_high_sugar
+ 827                  flag_low_fiber
+ 828                  / clodds=wald lackfit rsquare;
+ 829            title3 "Model B: Dietary Predictors of Obesity";
+ 830        run;
+ 
+ NOTE: PROC LOGISTIC is modeling the probability that obese=1.
+ NOTE: Convergence criterion (GCONV=1E-8) satisfied.
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC_FE.
+ NOTE: The PROCEDURE LOGISTIC printed pages 90-92.
+ NOTE: PROCEDURE LOGISTIC used (Total process time):
+       real time           0.08 seconds
+       user cpu time       0.09 seconds
+       system cpu time     0.01 seconds
+       memory              5678.28k
+       OS Memory           33640.00k
+       Timestamp           05/01/2026 09:19:33 PM
+       Step Count                        283  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     665
+       Page Swaps                        0
+       Voluntary Context Switches        15
+       Involuntary Context Switches      4
+       Block Input Operations            0
+       Block Output Operations           72
+       
+ 
+ 831        
+ 832        /* ---- Model C: Full Model — Activity + Diet + Demographics --------------- */
+ 833        proc logistic data=work.analytic_fe descending
+ 834                      outmodel=work.full_model;
+ 835        
+ 836            class sex_label   (ref='Male')
+ 837                  age_group   (ref='18-29')
+ 838                  income_cat  (ref='High Income')
+ 839                  / param=ref;
+ 840        
+ 841            model obese(event='1') =
+ 842                  /* Activity */
+ 843                  activity_score
+ 844                  met_min_wk
+ 845                  vig_min_wk
+ 846                  meets_pa_guidelines
+ 847                  sed_min
+ 848                  flag_high_sedentary
+ 849                  /* Diet */
+ 850                  log_calories
+ 851                  pct_protein
+ 852                  sugar_g
+ 853                  fiber_g
+ 854                  diet_score
+ 855                  flag_low_fiber
+ 856                  /* Demographics */
+ 857                  age
+ 858                  sex_label
+ 859                  age_group
+ 860                  pir
+ 861                  income_cat
+ 862                  flag_htn
+ 863                  / selection = stepwise
+ 864                    slentry   = &LOGIT_SL.
+ 865                    slstay    = &LOGIT_SL.
+ 866                    clodds    = wald
+ 867                    lackfit
+ 868                    rsquare
+ 869                    ctable pprob = (0.4 0.5)
+ 870                    outroc = work.roc_full;
+ 871        
+ 872            oddsratio activity_score / cl=wald;
+ 873        
+ 874            output out   = work.scored_full
+ 875                   p     = pred_prob
+ 876                   xbeta = log_odds;
+ 877        
+ 878            title3 "Model C: Full Model (Stepwise) — Activity + Diet + Demographics";
+ 879        run;
+ 
+ NOTE: PROC LOGISTIC is modeling the probability that obese=1.
+ NOTE: Convergence criterion (GCONV=1E-8) satisfied in Step 0.
+ NOTE: Convergence criterion (GCONV=1E-8) satisfied in Step 1.
+ NOTE: Convergence criterion (GCONV=1E-8) satisfied in Step 2.
+ NOTE: Convergence criterion (GCONV=1E-8) satisfied in Step 3.
+ NOTE: Convergence criterion (GCONV=1E-8) satisfied in Step 4.
+ NOTE: Convergence criterion (GCONV=1E-8) satisfied in Step 5.
+ NOTE: Convergence criterion (GCONV=1E-8) satisfied in Step 6.
+ NOTE: Convergence criterion (GCONV=1E-8) satisfied in Step 7.
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC_FE.
+ NOTE: The data set WORK.FULL_MODEL has 370 observations and 6 variables.
+ NOTE: The data set WORK.ROC_FULL has 22814 observations and 8 variables.
+ NOTE: The data set WORK.SCORED_FULL has 6235 observations and 44 variables.
+ NOTE: The PROCEDURE LOGISTIC printed pages 93-102.
+ NOTE: PROCEDURE LOGISTIC used (Total process time):
+       real time           0.46 seconds
+       user cpu time       0.44 seconds
+       system cpu time     0.02 seconds
+       memory              11714.50k
+       OS Memory           43204.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        284  Switch Count  14
+       Page Faults                       0
+       Page Reclaims                     2691
+       Page Swaps                        0
+       Voluntary Context Switches        83
+       Involuntary Context Switches      2
+       Block Input Operations            0
+       Block Output Operations           8632
+       
+ 
+ 880        
+ 881        ods graphics off;
+ 882        
+ 883        
+ 884        /******************************************************************************/
+ 885        /* SECTION 7: MODEL EVALUATION                                                */
+ 886        /*   7.1  AUC (c-statistic) from ROC data                                    */
+ 887        /*   7.2  Calibration: observed vs. predicted obesity rate by decile         */
+ 888        /*   7.3  Optimal cut-off via Youden's J Index                               */
+ 889        /*   7.4  Survey-weighted prevalence note (PROC SURVEYFREQ)                  */
+ 890        /******************************************************************************/
+ 891        
+ 892        title2 "Section 7 - Model Evaluation";
+ 893        
+ 894        /* ---- 7.1  AUC ----------------------------------------------------------- */
+ 895        /* OUTROC= creates sensitivity and 1-specificity values, but not a _C_ column.
+ 896           Compute AUC manually using the trapezoidal rule over the ROC curve. */
+ 897        proc sort data=work.roc_full out=work.roc_sorted;
+ 898            by _1mspec_;
+ 899        run;
+ 
+ NOTE: There were 22814 observations read from the data set WORK.ROC_FULL.
+ NOTE: The data set WORK.ROC_SORTED has 22814 observations and 8 variables.
+ NOTE: PROCEDURE SORT used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              4782.37k
+       OS Memory           33212.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        285  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     833
+       Page Swaps                        0
+       Voluntary Context Switches        16
+       Involuntary Context Switches      2
+       Block Input Operations            0
+       Block Output Operations           3088
+       
+ 
+ 900        
+ 901        data work.auc_full;
+ 902            set work.roc_sorted end=last;
+ 903            retain prev_x prev_y auc 0;
+ 904        
+ 905            x = _1mspec_;     /* false positive rate = 1 - specificity */
+ 906            y = _sensit_;     /* true positive rate = sensitivity */
+ 907        
+ 908            if _n_ = 1 then do;
+ 909                prev_x = x;
+ 910                prev_y = y;
+ 911            end;
+ 912            else do;
+ 913                auc + (x - prev_x) * (y + prev_y) / 2;
+ 914                prev_x = x;
+ 915                prev_y = y;
+ 916            end;
+ 917        
+ 918            if last then do;
+ 919                auc = round(auc, 0.001);
+ 920                output;
+ 921            end;
+ 922        
+ 923            keep auc;
+ 924        run;
+ 
+ NOTE: There were 22814 observations read from the data set WORK.ROC_SORTED.
+ NOTE: The data set WORK.AUC_FULL has 1 observations and 1 variables.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              2292.96k
+       OS Memory           30888.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        286  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     313
+       Page Swaps                        0
+       Voluntary Context Switches        11
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           264
+       
+ 
+ 925        
+ 926        title3 "AUC (c-statistic) - Full Model";
+ 927        proc print data=work.auc_full noobs label;
+ 928            var auc;
+ 929            label auc = "AUC";
+ 930            format auc 8.3;
+ 931        run;
+ 
+ NOTE: There were 1 observations read from the data set WORK.AUC_FULL.
+ NOTE: The PROCEDURE PRINT printed page 103.
+ NOTE: PROCEDURE PRINT used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              658.53k
+       OS Memory           29860.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        287  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     61
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 932        
+ 933        /* ---- 7.2  Calibration: observed vs. predicted by decile of risk --------- */
+ 934        proc rank data=work.scored_full groups=10 out=work.decile_full;
+ 935            var pred_prob;
+ 936            ranks risk_decile;
+ 937        run;
+ 
+ NOTE: The data set WORK.DECILE_FULL has 6235 observations and 45 variables.
+ NOTE: PROCEDURE RANK used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              4252.87k
+       OS Memory           32940.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        288  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     586
+       Page Swaps                        0
+       Voluntary Context Switches        30
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           5392
+       
+ 
+ 938        
+ 939        proc sql;
+ 940            title3 "Calibration: Observed vs. Predicted Obesity Rate by Risk Decile";
+ 941            select  risk_decile + 1                    as decile,
+ 942                    count(*)                           as n,
+ 943                    round(mean(pred_prob), 0.001)      as mean_pred,
+ 944                    round(mean(obese),     0.001)      as obs_rate
+ 945            from work.decile_full
+ 946            group by risk_decile
+ 947            order by risk_decile;
+ NOTE: The query as specified involves ordering by an item that doesn't appear in its SELECT clause.
+ 948        quit;
+ NOTE: The PROCEDURE SQL printed page 104.
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.00 seconds
+       memory              7692.20k
+       OS Memory           35752.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        289  Switch Count  1
+       Page Faults                       0
+       Page Reclaims                     477
+       Page Swaps                        0
+       Voluntary Context Switches        27
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ 949        
+ 950        /* ---- 7.3  Optimal cut-off: Youden's J ---------------------------------- */
+ 951        data work.youden;
+ 952            set work.roc_full;
+ 953            youden_j = _sensit_ + (1 - _1mspec_) - 1;
+ 954        run;
+ 
+ NOTE: There were 22814 observations read from the data set WORK.ROC_FULL.
+ NOTE: The data set WORK.YOUDEN has 22814 observations and 9 variables.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.01 seconds
+       memory              3553.21k
+       OS Memory           32680.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        290  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     528
+       Page Swaps                        0
+       Voluntary Context Switches        11
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           3344
+       
+ 
+ 955        
+ 956        proc sort data=work.youden out=work.youden_sorted;
+ 957            by descending youden_j;
+ 958        run;
+ 
+ NOTE: There were 22814 observations read from the data set WORK.YOUDEN.
+ NOTE: The data set WORK.YOUDEN_SORTED has 22814 observations and 9 variables.
+ NOTE: PROCEDURE SORT used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              5981.68k
+       OS Memory           34240.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        291  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     879
+       Page Swaps                        0
+       Voluntary Context Switches        13
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           3344
+       
+ 
+ 959        
+ 960        proc sql noprint outobs=1;
+ 961            select _prob_ into :opt_cut trimmed
+ 962            from work.youden_sorted;
+ 963        quit;
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              6945.56k
+       OS Memory           35752.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        292  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     242
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 964        
+ 965        %put NOTE: Optimal classification cut-off (Youden J) = &opt_cut.;
+ NOTE: Optimal classification cut-off (Youden J) = 0.40021
+ 966        
+ 967        title3 "Confusion Matrix at Optimal Cut-off (&opt_cut.)";
+ 968        data work.classified;
+ 969            set work.scored_full;
+ 970            predicted_obese = (pred_prob >= &opt_cut.);
+ 971        run;
+ 
+ NOTE: There were 6235 observations read from the data set WORK.SCORED_FULL.
+ NOTE: The data set WORK.CLASSIFIED has 6235 observations and 45 variables.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.01 seconds
+       memory              3644.31k
+       OS Memory           32680.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        293  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     528
+       Page Swaps                        0
+       Voluntary Context Switches        17
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           5128
+       
+ 
+ 972        
+ 973        proc freq data=work.classified;
+ 974            tables obese * predicted_obese / nopercent nocol norow;
+ 975        run;
+ 
+ NOTE: There were 6235 observations read from the data set WORK.CLASSIFIED.
+ NOTE: The PROCEDURE FREQ printed page 105.
+ NOTE: PROCEDURE FREQ used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.00 seconds
+       memory              2535.81k
+       OS Memory           31148.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        294  Switch Count  4
+       Page Faults                       0
+       Page Reclaims                     376
+       Page Swaps                        0
+       Voluntary Context Switches        28
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           528
+       
+ 
+ 976        
+ 977        /* ---- 7.4  Survey-weighted prevalence (proper national estimate) --------- */
+ 978        /* PROC SURVEYFREQ accounts for NHANES complex sampling design.              */
+ 979        /* This produces nationally-representative obesity prevalence estimates.      */
+ 980        title3 "Survey-Weighted Obesity Prevalence by Activity Level (National Estimate)";
+ 981        proc surveyfreq data=work.analytic_fe;
+ 982            weight exam_wt;
+ 983            tables activity_cat * obese / row nowt;
+ 984        run;
+ 
+ NOTE: The PROCEDURE SURVEYFREQ printed page 106.
+ NOTE: PROCEDURE SURVEYFREQ used (Total process time):
+       real time           0.02 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.00 seconds
+       memory              3550.25k
+       OS Memory           31656.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        295  Switch Count  1
+       Page Faults                       0
+       Page Reclaims                     373
+       Page Swaps                        0
+       Voluntary Context Switches        8
+       Involuntary Context Switches      4
+       Block Input Operations            0
+       Block Output Operations           16
+       
+ 
+ 985        
+ 986        title3 "Survey-Weighted Obesity Prevalence by Age Group";
+ 987        proc surveyfreq data=work.analytic_fe;
+ 988            weight exam_wt;
+ 989            tables age_group * obese / row nowt;
+ 990        run;
+ 
+ NOTE: The PROCEDURE SURVEYFREQ printed page 107.
+ NOTE: PROCEDURE SURVEYFREQ used (Total process time):
+       real time           0.02 seconds
+       user cpu time       0.03 seconds
+       system cpu time     0.00 seconds
+       memory              3550.25k
+       OS Memory           31656.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        296  Switch Count  1
+       Page Faults                       0
+       Page Reclaims                     373
+       Page Swaps                        0
+       Voluntary Context Switches        9
+       Involuntary Context Switches      2
+       Block Input Operations            0
+       Block Output Operations           16
+       
+ 
+ 991        
+ 992        
+ 993        /******************************************************************************/
+ 994        /* SECTION 8: RESULTS SUMMARY AND EXPORT                                      */
+ 995        /*   8.1  Top 20 highest-risk individuals (predicted probability)             */
+ 996        /*   8.2  Group-level summary for reporting                                   */
+ 997        /*   8.3  Save final analytic and scored datasets                             */
+ 998        /******************************************************************************/
+ 999        
+ 1000       title2 "Section 8 - Results Summary";
+ 1001       
+ 1002       /* ---- 8.1  Highest predicted obesity risk -------------------------------- */
+ 1003       proc sort data=work.scored_full out=work.high_risk;
+ 1004           by descending pred_prob;
+ 1005       run;
+ 
+ NOTE: There were 6235 observations read from the data set WORK.SCORED_FULL.
+ NOTE: The data set WORK.HIGH_RISK has 6235 observations and 44 variables.
+ NOTE: PROCEDURE SORT used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              5744.65k
+       OS Memory           34240.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        297  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     1022
+       Page Swaps                        0
+       Voluntary Context Switches        18
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           5136
+       
+ 
+ 1006       
+ 1007       title3 "Top 20 Highest Predicted Obesity Risk";
+ 1008       proc print data=work.high_risk (obs=20) noobs label;
+ 1009           var SEQN obese pred_prob bmi activity_cat calories fiber_g sugar_g;
+ 1010           format pred_prob 6.3 bmi 5.1;
+ 1011       run;
+ 
+ NOTE: There were 20 observations read from the data set WORK.HIGH_RISK.
+ NOTE: The PROCEDURE PRINT printed page 108.
+ NOTE: PROCEDURE PRINT used (Total process time):
+       real time           0.02 seconds
+       user cpu time       0.02 seconds
+       system cpu time     0.00 seconds
+       memory              2095.37k
+       OS Memory           30628.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        298  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     253
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           16
+       
+ 
+ 1012       
+ 1013       /* ---- 8.2  Summary by activity level: obesity rate, diet, BMI ----------- */
+ 1014       %profile_group(
+ 1015           dsn      = work.analytic_fe,
+ 1016           groupvar = activity_cat,
+ 1017           outvars  = obese bmi waist_cm met_min_wk sed_min calories fiber_g diet_score,
+ 1018           title    = Obesity Rate and Diet Quality by Physical Activity Level
+ 1019       );
+ NOTE: There were 6235 observations read from the data set WORK.ANALYTIC_FE.
+ NOTE: The PROCEDURE MEANS printed page 109.
+ NOTE: PROCEDURE MEANS used (Total process time):
+       real time           0.06 seconds
+       user cpu time       0.06 seconds
+       system cpu time     0.01 seconds
+       memory              8601.96k
+       OS Memory           35768.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        299  Switch Count  3
+       Page Faults                       0
+       Page Reclaims                     1601
+       Page Swaps                        0
+       Voluntary Context Switches        46
+       Involuntary Context Switches      2
+       Block Input Operations            0
+       Block Output Operations           16
+       
+ 
+ 1020       
+ 1021       /* ---- 8.3  Save scored dataset for downstream use ----------------------- */
+ 1022       data work.nhanes_scored;
+ 1023           set work.scored_full;
+ 1024           pred_pct = round(pred_prob * 100, 0.1);
+ 1025           label pred_pct = 'Predicted Obesity Probability (%)';
+ 1026       run;
+ 
+ NOTE: There were 6235 observations read from the data set WORK.SCORED_FULL.
+ NOTE: The data set WORK.NHANES_SCORED has 6235 observations and 45 variables.
+ NOTE: DATA statement used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.00 seconds
+       system cpu time     0.00 seconds
+       memory              3756.84k
+       OS Memory           32680.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        300  Switch Count  2
+       Page Faults                       0
+       Page Reclaims                     528
+       Page Swaps                        0
+       Voluntary Context Switches        18
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           5128
+       
+ 
+ 1027       
+ 1028       proc sql noprint;
+ 1029           select count(*) into :N_SCORED trimmed from work.nhanes_scored;
+ 1030       quit;
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.00 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              6960.28k
+       OS Memory           35752.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        301  Switch Count  0
+       Page Faults                       0
+       Page Reclaims                     244
+       Page Swaps                        0
+       Voluntary Context Switches        0
+       Involuntary Context Switches      0
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 1031       %put NOTE: Scored dataset saved: WORK.NHANES_SCORED (N = &N_SCORED.);
+ NOTE: Scored dataset saved: WORK.NHANES_SCORED (N = 6235)
+ 1032       
+ 1033       
+ 1034       /******************************************************************************/
+ 1035       /* SECTION 9: FINAL DATASET INVENTORY                                         */
+ 1036       /******************************************************************************/
+ 1037       
+ 1038       title2 "Section 9 - Final Dataset Inventory";
+ 1039       
+ 1040       proc sql;
+ 1041           title3 "WORK Library Datasets";
+ 1042           select memname, nobs, nvar
+ 1043           from dictionary.tables
+ 1044           where libname = 'WORK'
+ 1045             and memtype = 'DATA'
+ 1046             and memname in (
+ 1047                 'ANALYTIC','ANALYTIC_FE','NHANES_SCORED',
+ 1048                 'SCORED_A','SCORED_FULL','ROC_FULL'
+ 1049             )
+ 1050           order by memname;
+ 1051       quit;
+ NOTE: The PROCEDURE SQL printed page 110.
+ NOTE: PROCEDURE SQL used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.01 seconds
+       memory              6173.20k
+       OS Memory           34724.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        302  Switch Count  1
+       Page Faults                       0
+       Page Reclaims                     1492
+       Page Swaps                        0
+       Voluntary Context Switches        23
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           0
+       
+ 
+ 1052       
+ 1053       %put NOTE: =============================================================;
+ NOTE: =============================================================
+ 1054       %put NOTE: NHANES Analysis Pipeline COMPLETE.;
+ NOTE: NHANES Analysis Pipeline COMPLETE.
+ 1055       %put NOTE: Analytic cohort    N = &N_FE.;
+ NOTE: Analytic cohort    N = 6235
+ 1056       %put NOTE: Scored dataset     N = &N_SCORED.;
+ NOTE: Scored dataset     N = 6235
+ 1057       %put NOTE: Optimal cut-off      = &opt_cut.;
+ NOTE: Optimal cut-off      = 0.40021
+ 1058       %put NOTE: =============================================================;
+ NOTE: =============================================================
+ 1059       
+ 1060       /* Cleanup intermediate tables */
+ 1061       proc datasets library=work nolist;
+ 1062           delete demo demo_clean bmx bmx_clean paq paq_clean
+ 1063                  diet diet_clean bp bp_clean
+ 1064                  decile_full youden classified high_risk;
+ 1065       quit;
+ 
+ NOTE: Deleting WORK.DEMO (memtype=DATA).
+ NOTE: Deleting WORK.DEMO_CLEAN (memtype=DATA).
+ NOTE: Deleting WORK.BMX (memtype=DATA).
+ NOTE: Deleting WORK.BMX_CLEAN (memtype=DATA).
+ NOTE: Deleting WORK.PAQ (memtype=DATA).
+ NOTE: Deleting WORK.PAQ_CLEAN (memtype=DATA).
+ NOTE: Deleting WORK.DIET (memtype=DATA).
+ NOTE: Deleting WORK.DIET_CLEAN (memtype=DATA).
+ NOTE: Deleting WORK.BP (memtype=DATA).
+ NOTE: Deleting WORK.BP_CLEAN (memtype=DATA).
+ NOTE: Deleting WORK.DECILE_FULL (memtype=DATA).
+ NOTE: Deleting WORK.YOUDEN (memtype=DATA).
+ NOTE: Deleting WORK.CLASSIFIED (memtype=DATA).
+ NOTE: Deleting WORK.HIGH_RISK (memtype=DATA).
+ NOTE: PROCEDURE DATASETS used (Total process time):
+       real time           0.01 seconds
+       user cpu time       0.01 seconds
+       system cpu time     0.00 seconds
+       memory              484.59k
+       OS Memory           29860.00k
+       Timestamp           05/01/2026 09:19:34 PM
+       Step Count                        303  Switch Count  28
+       Page Faults                       0
+       Page Reclaims                     49
+       Page Swaps                        0
+       Voluntary Context Switches        184
+       Involuntary Context Switches      1
+       Block Input Operations            0
+       Block Output Operations           8
+       
+ 
+ 1066       
+ 1067       ods listing close;
+ 1068       
+ 1069       title;
+ 1070       footnote;
+ 1071       
+ 1072       /****** END OF PROGRAM ******/
+ 1073       
+ 1074       OPTIONS NONOTES NOSTIMER NOSOURCE NOSYNTAXCHECK;
+ 1084       
