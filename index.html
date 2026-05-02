@@ -19,7 +19,7 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
 body{font-family:var(--sans);background:var(--bg);color:var(--body);font-size:16px;line-height:1.7;-webkit-font-smoothing:antialiased}
-.wrap{max-width:900px;margin:0 auto;padding:0 2rem 6rem}
+.wrap{max-width:900px;width:100%;margin:0 auto;padding:0 2rem 6rem;overflow:hidden}
 
 /* Header */
 .jrnl-hdr{border-bottom:1px solid var(--rule);padding:1.25rem 0 1rem;display:flex;justify-content:space-between;align-items:baseline}
@@ -59,7 +59,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--body);font-size:16
 .toc a:hover{text-decoration:underline}
 
 /* Sections */
-.section{margin:0 0 4rem}
+.section{margin:0 0 4rem;min-width:0;width:100%;max-width:100%}
 .sec-num{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.15em;color:var(--mid);margin-bottom:.5rem;display:block}
 h2.sec-title{font-family:var(--serif);font-size:26px;font-weight:600;color:var(--navy);margin-bottom:1.25rem;padding-bottom:.75rem;border-bottom:1px solid var(--rule);line-height:1.2}
 h3{font-family:var(--sans);font-size:13px;font-weight:500;color:var(--ink);margin:2rem 0 .6rem;text-transform:uppercase;letter-spacing:.06em}
@@ -93,12 +93,12 @@ sup.ref{font-size:10px;color:var(--accent);font-weight:500;vertical-align:super;
 .rb-val{font-size:13px;font-weight:500;font-family:var(--mono);text-align:right}
 
 /* ─── Stepwise AUC builder ─────────────────────────────────────────────── */
-.auc-builder{margin:1.5rem 0;background:var(--card);border:1px solid var(--rule);border-radius:8px;overflow:hidden}
+.auc-builder{margin:1.5rem 0;background:var(--card);border:1px solid var(--rule);border-radius:8px;overflow:hidden;max-width:100%}
 .auc-header{padding:1rem 1.5rem .75rem;border-bottom:1px solid var(--rule)}
 .auc-title{font-size:13px;font-weight:500;color:var(--ink);margin-bottom:2px}
 .auc-cap{font-size:12px;color:var(--muted);font-style:italic}
 .auc-steps{padding:1rem 1.5rem 1.5rem}
-.auc-step{display:grid;grid-template-columns:18px 160px 1fr 52px;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f7f7f5;opacity:0;transform:translateY(6px);transition:opacity .35s ease,transform .35s ease}
+.auc-step{display:grid;grid-template-columns:18px minmax(0,160px) 1fr 52px;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f7f7f5;opacity:0;transform:translateY(6px);transition:opacity .35s ease,transform .35s ease}
 .auc-step.visible{opacity:1;transform:translateY(0)}
 .step-num{font-size:11px;color:var(--muted);font-family:var(--mono);text-align:center}
 .step-var{font-size:12.5px;color:var(--body)}
@@ -108,13 +108,13 @@ sup.ref{font-size:10px;color:var(--accent);font-weight:500;vertical-align:super;
 .step-auc{font-size:13px;font-weight:500;font-family:var(--mono);color:var(--navy)}
 
 /* ─── OR Forest plot ─────────────────────────────────────────────────── */
-.forest-wrap{margin:1.5rem 0;overflow-x:auto}
-.forest-row{display:grid;grid-template-columns:220px 260px 90px;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f7f7f5;opacity:0;transform:translateY(5px);transition:opacity .3s ease,transform .3s ease}
+.forest-wrap{margin:1.5rem 0;overflow-x:auto;max-width:100%;width:100%}
+.forest-row{display:grid;grid-template-columns:190px minmax(0,1fr) 80px;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f7f7f5;opacity:0;transform:translateY(5px);transition:opacity .3s ease,transform .3s ease;min-width:0}
 .forest-row.visible{opacity:1;transform:translateY(0)}
 .forest-row.header{background:#f0f4f8;border-radius:3px;padding:7px 6px;opacity:1;transform:none;font-size:11px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border:none}
-.fr-label{font-size:12.5px;color:var(--body);line-height:1.4}
+.fr-label{font-size:12.5px;color:var(--body);line-height:1.4;word-break:break-word;min-width:0}
 .fr-label small{font-size:11px;color:var(--muted);display:block}
-.fr-bar-area{position:relative;height:20px;display:flex;align-items:center}
+.fr-bar-area{position:relative;height:20px;display:flex;align-items:center;min-width:0;overflow:hidden}
 .fr-ref-line{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#aaa}
 .fr-bar{position:absolute;height:8px;border-radius:2px;transition:all .8s cubic-bezier(.4,0,.2,1)}
 .fr-diamond{position:absolute;width:10px;height:10px;border-radius:2px;transform:rotate(45deg);transition:all .8s cubic-bezier(.4,0,.2,1)}
@@ -133,7 +133,7 @@ sup.ref{font-size:10px;color:var(--accent);font-weight:500;vertical-align:super;
 .delta-bar{display:inline-block;height:8px;border-radius:2px;margin-left:6px;vertical-align:middle}
 
 /* ─── Income gradient ─────────────────────────────────────────────── */
-.income-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin:1.25rem 0}
+.income-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin:1.25rem 0;max-width:100%}
 .income-card{border-radius:6px;padding:1.1rem;text-align:center;opacity:0;transform:translateY(8px);transition:opacity .4s ease,transform .4s ease}
 .income-card.visible{opacity:1;transform:translateY(0)}
 .inc-tier{font-size:10px;text-transform:uppercase;letter-spacing:.1em;font-weight:500;margin-bottom:.5rem;color:var(--muted)}
@@ -174,9 +174,12 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
 @media(max-width:640px){
   .metrics{grid-template-columns:repeat(2,1fr)}
   .income-grid{grid-template-columns:repeat(2,1fr)}
-  .forest-row{grid-template-columns:160px 200px 80px}
+  .forest-row{grid-template-columns:130px 1fr 70px}
   .auc-step{grid-template-columns:18px 140px 1fr 48px}
 }
+.wrap table{max-width:100%}
+.wrap *{max-width:100%;box-sizing:border-box}
+.wrap img,.wrap canvas,.wrap svg{max-width:100%;height:auto}
 </style>
 </head>
 <body>
@@ -371,24 +374,27 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
     </div>
     <div class="auc-steps" id="auc-steps">
       <div class="auc-step"><span class="step-num">0</span><span class="step-var">Null model</span><div class="step-track"><div class="step-fill" style="background:#d0d0d0" data-w="0"></div></div><span class="step-auc">0.500</span></div>
-      <div class="auc-step"><span class="step-num">1</span><span class="step-var"><strong>Composite Activity Score</strong></span><div class="step-track"><div class="step-fill" style="background:#1d9e75" data-w="57.8"></div></div><span class="step-auc">0.608</span></div>
-      <div class="auc-step"><span class="step-num">2</span><span class="step-var">Hypertension</span><div class="step-track"><div class="step-fill" style="background:#2980b9" data-w="61.7"></div></div><span class="step-auc">0.624</span></div>
-      <div class="auc-step"><span class="step-num">3</span><span class="step-var">Dietary Fiber</span><div class="step-track"><div class="step-fill" style="background:#2980b9" data-w="65.0"></div></div><span class="step-auc">0.635</span></div>
-      <div class="auc-step"><span class="step-num">4</span><span class="step-var">Age Group</span><div class="step-track"><div class="step-fill" style="background:#8e44ad" data-w="67.0"></div></div><span class="step-auc">0.642</span></div>
-      <div class="auc-step"><span class="step-num">5</span><span class="step-var">Sedentary Minutes/Day</span><div class="step-track"><div class="step-fill" style="background:#1d9e75" data-w="68.3"></div></div><span class="step-auc">0.647</span></div>
-      <div class="auc-step"><span class="step-num">6</span><span class="step-var">Income Category</span><div class="step-track"><div class="step-fill" style="background:#8e44ad" data-w="70.3"></div></div><span class="step-auc">0.655</span></div>
-      <div class="auc-step"><span class="step-num">7</span><span class="step-var">Age (continuous)</span><div class="step-track"><div class="step-fill" style="background:#8e44ad" data-w="70.7"></div></div><span class="step-auc" style="color:var(--navy);font-weight:600">0.656</span></div>
+      <div class="auc-step"><span class="step-num">1</span><span class="step-var"><strong>Composite Activity Score</strong><br><small style="color:var(--muted);font-size:10.5px">Score χ²=168.5</small></span><div class="step-track"><div class="step-fill" style="background:#1d9e75" data-w="100"></div></div><span class="step-auc" style="font-size:11px">p&lt;.001</span></div>
+      <div class="auc-step"><span class="step-num">2</span><span class="step-var">Hypertension<br><small style="color:var(--muted);font-size:10.5px">χ²=57.2</small></span><div class="step-track"><div class="step-fill" style="background:#2980b9" data-w="34.0"></div></div><span class="step-auc" style="font-size:11px">p&lt;.001</span></div>
+      <div class="auc-step"><span class="step-num">3</span><span class="step-var">Dietary Fiber<br><small style="color:var(--muted);font-size:10.5px">χ²=35.3</small></span><div class="step-track"><div class="step-fill" style="background:#2980b9" data-w="20.9"></div></div><span class="step-auc" style="font-size:11px">p&lt;.001</span></div>
+      <div class="auc-step"><span class="step-num">4</span><span class="step-var">Age Group<br><small style="color:var(--muted);font-size:10.5px">χ²=40.1</small></span><div class="step-track"><div class="step-fill" style="background:#8e44ad" data-w="23.8"></div></div><span class="step-auc" style="font-size:11px">p&lt;.001</span></div>
+      <div class="auc-step"><span class="step-num">5</span><span class="step-var">Sedentary Min/Day<br><small style="color:var(--muted);font-size:10.5px">χ²=21.2</small></span><div class="step-track"><div class="step-fill" style="background:#1d9e75" data-w="12.6"></div></div><span class="step-auc" style="font-size:11px">p&lt;.001</span></div>
+      <div class="auc-step"><span class="step-num">6</span><span class="step-var">Income Category<br><small style="color:var(--muted);font-size:10.5px">χ²=34.3</small></span><div class="step-track"><div class="step-fill" style="background:#8e44ad" data-w="20.4"></div></div><span class="step-auc" style="font-size:11px">p&lt;.001</span></div>
+      <div class="auc-step"><span class="step-num">7</span><span class="step-var">Age (continuous)<br><small style="color:var(--muted);font-size:10.5px">χ²=7.76</small></span><div class="step-track"><div class="step-fill" style="background:#8e44ad" data-w="4.6"></div></div><span class="step-auc" style="font-size:11px;color:var(--navy);font-weight:600">p=0.005</span></div>
     </div>
-    <div style="display:flex;gap:16px;padding:.5rem 1.5rem 1rem;flex-wrap:wrap">
+    <div style="display:flex;gap:16px;padding:.5rem 1.5rem .5rem;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><div style="width:10px;height:10px;background:#1d9e75;border-radius:2px"></div>Lifestyle / modifiable</div>
       <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><div style="width:10px;height:10px;background:#2980b9;border-radius:2px"></div>Clinical / comorbidity</div>
       <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><div style="width:10px;height:10px;background:#8e44ad;border-radius:2px"></div>Sociodemographic</div>
+    </div>
+    <div style="padding:.3rem 1.5rem .8rem;font-size:12px;color:var(--muted);border-top:1px solid #f0f0ee;margin-top:.2rem">
+      c-statistic = <strong style="color:var(--navy)">0.656</strong> &nbsp;·&nbsp; H-L χ²=1.63, p=0.9903 &nbsp;·&nbsp; Optimal cut-off=0.40021 (sensitivity 65.3%, specificity 55.3%)
     </div>
   </div>
 
   <h3>5.4 Odds ratios — final model (Model C)</h3>
 
-  <div class="forest-wrap">
+  <div class="forest-wrap" style="width:100%;max-width:100%">
     <div class="forest-row header">
       <span>Predictor</span><span style="text-align:center;display:block">← Protective &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Harmful →</span><span>OR (95% CI)</span>
     </div>
@@ -414,11 +420,6 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
       <div class="fr-bar-area"><div class="fr-ref-line"></div></div>
       <span class="fr-or risk">1.001</span>
     </div>
-    <div class="forest-row" data-or="1.156" data-lo="1.026" data-hi="1.302" data-prot="false">
-      <span class="fr-label">Sex: Female vs Male<small>↑ risk</small></span>
-      <div class="fr-bar-area"><div class="fr-ref-line"></div></div>
-      <span class="fr-or risk">1.156</span>
-    </div>
     <div class="forest-row" data-or="1.947" data-lo="1.490" data-hi="2.545" data-prot="false">
       <span class="fr-label">Age 30–44 vs 18–29<small>↑ risk</small></span>
       <div class="fr-bar-area"><div class="fr-ref-line"></div></div>
@@ -440,7 +441,35 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
       <span class="fr-or risk">1.553</span>
     </div>
   </div>
-  <p style="font-size:12px;color:var(--muted);margin-top:.5rem">★ = most influential predictor in its category. All p&lt;0.001 unless noted. Reference: high income, male sex, age 18–29.</p>
+  <p style="font-size:12px;color:var(--muted);margin-top:.5rem">★ = most influential predictor in its category. All p&lt;0.001 unless noted. Reference: high income, age 18–29.</p>
+  <div style="overflow-x:auto;margin:1.25rem 0;width:100%;max-width:100%">
+  <div style="font-size:13px;font-weight:500;color:var(--ink);margin-bottom:.3rem">Table 2. Full Model C — Maximum Likelihood Estimates (SAS PROC LOGISTIC, N=4,929)</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="background:var(--navy)">
+      <th style="color:#fff;padding:7px 9px;text-align:left;font-size:10.5px;width:28%">Predictor</th>
+      <th style="color:#fff;padding:7px 9px;text-align:right;font-size:10.5px;width:10%">Coeff</th>
+      <th style="color:#fff;padding:7px 9px;text-align:right;font-size:10.5px;width:10%">SE</th>
+      <th style="color:#fff;padding:7px 9px;text-align:right;font-size:10.5px;width:8%">OR</th>
+      <th style="color:#fff;padding:7px 9px;text-align:center;font-size:10.5px;width:18%">95% Wald CI</th>
+      <th style="color:#fff;padding:7px 9px;text-align:right;font-size:10.5px;width:12%">Wald χ²</th>
+      <th style="color:#fff;padding:7px 9px;text-align:right;font-size:10.5px;width:14%">p</th>
+    </tr></thead>
+    <tbody>
+      <tr><td style="padding:6px 9px">Composite activity score (per pt)</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">−0.0707</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.0074</td><td style="padding:6px 9px;text-align:right;font-weight:500;color:var(--green)">0.932</td><td style="padding:6px 9px;text-align:center">0.918–0.945</td><td style="padding:6px 9px;text-align:right">91.86</td><td style="padding:6px 9px;text-align:right">&lt;0.001</td></tr>
+      <tr style="background:#f9f9f9"><td style="padding:6px 9px">Sedentary time (per min/day)</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.000853</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.000153</td><td style="padding:6px 9px;text-align:right;font-weight:500;color:var(--red)">1.001</td><td style="padding:6px 9px;text-align:center">1.001–1.001</td><td style="padding:6px 9px;text-align:right">31.28</td><td style="padding:6px 9px;text-align:right">&lt;0.001</td></tr>
+      <tr><td style="padding:6px 9px">Dietary fiber (per g/day)</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">−0.0170</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.0031</td><td style="padding:6px 9px;text-align:right;font-weight:500;color:var(--green)">0.983</td><td style="padding:6px 9px;text-align:center">0.977–0.989</td><td style="padding:6px 9px;text-align:right">29.54</td><td style="padding:6px 9px;text-align:right">&lt;0.001</td></tr>
+      <tr style="background:#f9f9f9"><td style="padding:6px 9px">Hypertension</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.4208</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.0623</td><td style="padding:6px 9px;text-align:right;font-weight:500;color:var(--red)">1.523</td><td style="padding:6px 9px;text-align:center">1.348–1.721</td><td style="padding:6px 9px;text-align:right">45.58</td><td style="padding:6px 9px;text-align:right">&lt;0.001</td></tr>
+      <tr><td style="padding:6px 9px">Age 45–59 vs 18–29</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">1.1893</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.2028</td><td style="padding:6px 9px;text-align:right;font-weight:500;color:var(--red)">3.285</td><td style="padding:6px 9px;text-align:center">2.208–4.887</td><td style="padding:6px 9px;text-align:right">34.41</td><td style="padding:6px 9px;text-align:right">&lt;0.001</td></tr>
+      <tr style="background:#f9f9f9"><td style="padding:6px 9px">Age 60+ vs 18–29</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">1.0554</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.2807</td><td style="padding:6px 9px;text-align:right;color:var(--red)">2.873</td><td style="padding:6px 9px;text-align:center">1.657–4.980</td><td style="padding:6px 9px;text-align:right">14.14</td><td style="padding:6px 9px;text-align:right">&lt;0.001</td></tr>
+      <tr><td style="padding:6px 9px">Age 30–44 vs 18–29</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.6664</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.1366</td><td style="padding:6px 9px;text-align:right;color:var(--red)">1.947</td><td style="padding:6px 9px;text-align:center">1.490–2.545</td><td style="padding:6px 9px;text-align:right">23.80</td><td style="padding:6px 9px;text-align:right">&lt;0.001</td></tr>
+      <tr style="background:#f9f9f9"><td style="padding:6px 9px">Income: Below Poverty vs High</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.4405</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.1012</td><td style="padding:6px 9px;text-align:right;font-weight:500;color:var(--red)">1.553</td><td style="padding:6px 9px;text-align:center">1.274–1.894</td><td style="padding:6px 9px;text-align:right">18.93</td><td style="padding:6px 9px;text-align:right">&lt;0.001</td></tr>
+      <tr><td style="padding:6px 9px">Income: Middle vs High</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.3942</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.0744</td><td style="padding:6px 9px;text-align:right;color:var(--red)">1.483</td><td style="padding:6px 9px;text-align:center">1.282–1.716</td><td style="padding:6px 9px;text-align:right">28.08</td><td style="padding:6px 9px;text-align:right">&lt;0.001</td></tr>
+      <tr style="background:#f9f9f9"><td style="padding:6px 9px">Income: Low vs High</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.3630</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.0919</td><td style="padding:6px 9px;text-align:right;color:var(--red)">1.438</td><td style="padding:6px 9px;text-align:center">1.201–1.721</td><td style="padding:6px 9px;text-align:right">15.62</td><td style="padding:6px 9px;text-align:right">&lt;0.001</td></tr>
+      <tr><td style="padding:6px 9px">Age (continuous, per year)</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">−0.0158</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono)">0.0057</td><td style="padding:6px 9px;text-align:right;color:var(--green)">0.984</td><td style="padding:6px 9px;text-align:center">0.973–0.995</td><td style="padding:6px 9px;text-align:right">7.75</td><td style="padding:6px 9px;text-align:right">0.005</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:11.5px;color:var(--muted);margin-top:.4rem">Coeff = log-odds; OR = exp(Coeff); 95% Wald CI. c-statistic=0.656; H-L χ²=1.6304, p=0.9903; optimal cut-off=0.40021 (sensitivity 65.3%, specificity 55.3%).</p>
+  </div>
 
   <h3>5.5 Income gradient in obesity odds</h3>
   <p>A persistent socioeconomic gradient was observed: even after adjusting for physical activity, dietary quality, age, and sex, adults below the federal poverty level had 55% higher obesity odds than high-income peers.</p>
@@ -460,7 +489,7 @@ footer{border-top:1px solid var(--rule);padding:2rem 0 1rem;margin-top:4rem;disp
   <span class="sec-num">Section 6</span>
   <h2 class="sec-title">Model Performance &amp; Calibration</h2>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin:1rem 0">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin:1rem 0;max-width:100%">
     <div style="background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:1.25rem">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.5rem">Discrimination</div>
       <div style="font-family:var(--serif);font-size:36px;color:var(--navy);font-weight:600;line-height:1">0.656</div>
@@ -629,12 +658,14 @@ function renderForest() {
     const ciLeft = center + logLo * scale;
     const ciWidth = (logHi - logLo) * scale;
     ciEl.className = 'fr-ci';
-    ciEl.style.cssText = `left:${ciLeft}%;width:${ciWidth}%;background:${prot?'#1d6b4a':'#8b1f1f'};opacity:0;transition:opacity .6s ease`;
+    const ciLeftC = Math.max(1, Math.min(92, ciLeft));
+    const ciWidthC = Math.min(ciWidth, 97 - ciLeftC);
+    ciEl.style.cssText = `left:${ciLeftC}%;width:${ciWidthC}%;background:${prot?'#1d6b4a':'#8b1f1f'};opacity:0;transition:opacity .6s ease`;
     area.appendChild(ciEl);
 
     // Diamond / point estimate
     const dEl = document.createElement('div');
-    const dLeft = center + logOR * scale - 5;
+    const dLeft = Math.max(1, Math.min(90, center + logOR * scale - 5));
     dEl.className = 'fr-diamond';
     dEl.style.cssText = `left:${dLeft}%;background:${prot?'#1d9e75':'#c0392b'};opacity:0;transition:opacity .6s ease .1s`;
     area.appendChild(dEl);
