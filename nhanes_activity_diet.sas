@@ -37,14 +37,16 @@
 /* SECTION 0: GLOBAL SETUP                                                    */
 /******************************************************************************/
 
+/* Export traditional SAS listing output for .lst submission */
+ods listing file="/home/u64415572/nhanes-activity-diet/nhanes_activity_diet.lst";
+
 options nodate nonumber linesize=120 pagesize=60;
 
-/* ---- Update this path to your SAS OnDemand upload folder --------------- */
 %let DATAPATH = /home/u64415572/nhanes-activity-diet;
 
 /* ---- Analysis parameters ----------------------------------------------- */
 %let MIN_AGE   = 18;     /* Restrict to adults                              */
-%let SEED      = 20260201;
+%let SEED      = 20260425;
 %let LOGIT_SL  = 0.05;
 
 title1 "NHANES 2021-2023: Diet, Physical Activity, and Obesity";
@@ -72,7 +74,6 @@ title2 "Yuntao (Kevin) Tan  |  Independent Portfolio  |  CDC Public-Use Data Ana
 %macro import_xpt(file=, out=);
 
     /* PROC COPY via xport libname is the most reliable XPT import method.
-       The filename reference is used only as a fallback check.
        Note: Linux filesystems are case-sensitive; files on disk are .xpt  */
     libname xptlib xport "&DATAPATH./&file..xpt" access=readonly;
 
@@ -158,20 +159,6 @@ title2 "Yuntao (Kevin) Tan  |  Independent Portfolio  |  CDC Public-Use Data Ana
 /* SECTION 2: DATA IMPORT                                                     */
 /*   Import five NHANES XPT files. Each file shares SEQN as the unique       */
 /*   respondent key for merging.                                              */
-/*                                                                            */
-/*   HOW TO GET THE DATA (one-time setup):                                   */
-/*   1. Go to https://wwwn.cdc.gov/nchs/nhanes/search/datapage.aspx          */
-/*   2. Select cycle "August 2021 - August 2023"                             */
-/*   3. Download these XPT files:                                            */
-/*        Demographics  -> DEMO_L.XPT                                        */
-/*        Examination   -> BMX_L.XPT                                         */
-/*        Questionnaire -> PAQ_L.XPT  (2021-2023: PAD790Q/U, PAD800,        */
-/*                                     PAD810Q/U, PAD820, PAD680)            */
-/*        Dietary       -> DR1TOT_L.XPT  (Day 1 Total Nutrients)             */
-/*        Examination   -> BPXO_L.XPT   (Blood Pressure)                    */
-/*   4. Upload all five files to your SAS OnDemand home folder:              */
-/*        Server Files -> Upload -> select all five XPT files                */
-/*   5. Update %let DATAPATH above to point to that folder.                  */
 /******************************************************************************/
 
 title2 "Section 2 - Data Import";
@@ -197,15 +184,12 @@ title2 "Section 3 - Data Cleaning and Cohort Selection";
 data work.demo_clean;
     set work.demo;
 
-    /* Restrict to adults */
     where RIDAGEYR >= &MIN_AGE.;
 
-    /* Rename for clarity */
     age     = RIDAGEYR;
     sex     = RIAGENDR;     /* 1=Male 2=Female                               */
     pir     = INDFMPIR;     /* Poverty-to-income ratio; higher=wealthier     */
 
-    /* Race/ethnicity: recode to readable label */
     length race_label $25;
     select (RIDRETH3);
         when (1) race_label = 'Mexican American';
@@ -216,12 +200,10 @@ data work.demo_clean;
         otherwise race_label = 'Other/Multiracial';
     end;
 
-    /* Sex label */
     length sex_label $8;
     if sex = 1 then sex_label = 'Male';
     else if sex = 2 then sex_label = 'Female';
 
-    /* Age groups */
     length age_group $10;
     if      age < 30 then age_group = '18-29';
     else if age < 45 then age_group = '30-44';
@@ -331,8 +313,7 @@ data work.paq_clean;
         then vig_min_wk = 0;
     else vig_min_wk = .;
 
-    /* --- Step 4: Approximate days/week for backward compatibility ----------
-       Round frequency to nearest whole day, capped at 7.                   */
+    /* --- Step 4: Derive integer days/week for cross-tabulation; capped at 7 */
     if not missing(mod_freq_wk) then mod_days = min(7, round(mod_freq_wk));
     else mod_days = .;
 
@@ -397,7 +378,6 @@ run;
 data work.diet_clean;
     set work.diet;
 
-    /* Keep only reliable, complete dietary recalls */
     where DR1DRSTZ = 1;
 
     calories  = DR1TKCAL;
@@ -411,7 +391,6 @@ data work.diet_clean;
     /* Nutrient density: protein as % of total calories (4 kcal/g) */
     if calories > 0 then pct_protein = (protein_g * 4 / calories) * 100;
 
-    /* Flag high sugar intake (> 100g/day) */
     flag_high_sugar = (sugar_g > 100);
 
     /* Flag low fiber intake (< 15g/day; US median is ~16g) */
@@ -442,8 +421,8 @@ data work.bp_clean;
     set work.bp;
 
     /* BPXO_L contains oscillometric readings; use first reading */
-    sbp = BPXOSY1;   /* Systolic  */
-    dbp = BPXODI1;   /* Diastolic */
+    sbp = BPXOSY1;
+    dbp = BPXODI1;
 
     /* Hypertension flag: SBP >= 130 or DBP >= 80 (ACC/AHA 2017 definition) */
     if not missing(sbp) and not missing(dbp) then
@@ -675,7 +654,6 @@ data work.analytic_fe;
     /* --- Sedentary behavior flag: >= 8 hours/day sitting ---------------  */
     flag_high_sedentary = (sed_min >= 480);
 
-    /* --- Income category from poverty-to-income ratio ------------------- */
     length income_cat $15;
     if      pir < 1.0 then income_cat = 'Below Poverty';
     else if pir < 2.0 then income_cat = 'Low Income';
@@ -720,7 +698,9 @@ quit;
 
 title2 "Section 6 - Logistic Regression: Predictors of Obesity";
 
-ods graphics on;
+/* Keep graphics off for clean .log/.lst export in SAS Studio.
+   This avoids image-write permission errors for generated OR plots. */
+ods graphics off;
 
 /* ---- Model A: Physical Activity Only ------------------------------------ */
 proc logistic data=work.analytic_fe descending;
@@ -796,8 +776,6 @@ proc logistic data=work.analytic_fe descending
             outroc = work.roc_full;
 
     oddsratio activity_score / cl=wald;
-    oddsratio met_min_wk     / cl=wald;
-    oddsratio diet_score     / cl=wald;
 
     output out   = work.scored_full
            p     = pred_prob
@@ -820,11 +798,43 @@ ods graphics off;
 title2 "Section 7 - Model Evaluation";
 
 /* ---- 7.1  AUC ----------------------------------------------------------- */
-proc sql;
-    title3 "AUC (c-statistic) - Full Model";
-    select round(max(_c_), 0.001) as auc format=8.3
-    from work.roc_full;
-quit;
+/* OUTROC= creates sensitivity and 1-specificity values, but not a _C_ column.
+   Compute AUC manually using the trapezoidal rule over the ROC curve. */
+proc sort data=work.roc_full out=work.roc_sorted;
+    by _1mspec_;
+run;
+
+data work.auc_full;
+    set work.roc_sorted end=last;
+    retain prev_x prev_y auc 0;
+
+    x = _1mspec_;     /* false positive rate = 1 - specificity */
+    y = _sensit_;     /* true positive rate = sensitivity */
+
+    if _n_ = 1 then do;
+        prev_x = x;
+        prev_y = y;
+    end;
+    else do;
+        auc + (x - prev_x) * (y + prev_y) / 2;
+        prev_x = x;
+        prev_y = y;
+    end;
+
+    if last then do;
+        auc = round(auc, 0.001);
+        output;
+    end;
+
+    keep auc;
+run;
+
+title3 "AUC (c-statistic) - Full Model";
+proc print data=work.auc_full noobs label;
+    var auc;
+    label auc = "AUC";
+    format auc 8.3;
+run;
 
 /* ---- 7.2  Calibration: observed vs. predicted by decile of risk --------- */
 proc rank data=work.scored_full groups=10 out=work.decile_full;
@@ -849,10 +859,13 @@ data work.youden;
     youden_j = _sensit_ + (1 - _1mspec_) - 1;
 run;
 
-proc sql noprint;
+proc sort data=work.youden out=work.youden_sorted;
+    by descending youden_j;
+run;
+
+proc sql noprint outobs=1;
     select _prob_ into :opt_cut trimmed
-    from   work.youden
-    having youden_j = max(youden_j);
+    from work.youden_sorted;
 quit;
 
 %put NOTE: Optimal classification cut-off (Youden J) = &opt_cut.;
@@ -868,8 +881,6 @@ proc freq data=work.classified;
 run;
 
 /* ---- 7.4  Survey-weighted prevalence (proper national estimate) --------- */
-/* PROC SURVEYFREQ accounts for NHANES complex sampling design.              */
-/* This produces nationally-representative obesity prevalence estimates.      */
 title3 "Survey-Weighted Obesity Prevalence by Activity Level (National Estimate)";
 proc surveyfreq data=work.analytic_fe;
     weight exam_wt;
@@ -956,6 +967,8 @@ proc datasets library=work nolist;
            diet diet_clean bp bp_clean
            decile_full youden classified high_risk;
 quit;
+
+ods listing close;
 
 title;
 footnote;
